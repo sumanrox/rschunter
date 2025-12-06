@@ -1,9 +1,0 @@
-# Test various URL formats - all should work
-192.168.0.58:3000
-rajyasabha.nic.in
-localhost:8080
-example.com/api/v1
-sub.domain.com:443
-10.0.0.1:3000/admin
-http://explicit-http.com
-https://explicit-https.com:8443

@@ -399,7 +399,7 @@ class RscScanner:
     
     def __init__(self, timeout: int = 10, maxWorkers: int = 10, wafBypass: bool = False, 
                  wafBypassSize: int = 128, windowsMode: bool = False, vercelWafBypass: bool = False,
-                 followRedirects: bool = True):
+                 followRedirects: bool = True, debug: bool = False):
         self.timeout = timeout
         self.maxWorkers = maxWorkers
         self.wafBypass = wafBypass
@@ -407,6 +407,7 @@ class RscScanner:
         self.windowsMode = windowsMode
         self.vercelWafBypass = vercelWafBypass
         self.followRedirects = followRedirects
+        self.debug = debug
         self.session = self._createSession()
         
     def _createSession(self) -> requests.Session:
@@ -745,7 +746,8 @@ class MassScanner:
             wafBypassSize=wafBypassSize,
             windowsMode=windowsMode,
             vercelWafBypass=vercelWafBypass,
-            followRedirects=followRedirects
+            followRedirects=followRedirects,
+            debug=debug
         )
         self.noSave = noSave
         self.stateManager = ScanStateManager() if not noSave else None
