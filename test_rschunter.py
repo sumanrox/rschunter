@@ -237,10 +237,27 @@ class TestScanResult(unittest.TestCase):
 def runTests():
     """Run all tests with verbose output and beautiful statistics"""
     import time
+    import sys
+    
+    # Detect if terminal supports Unicode (for emojis)
+    supportsUnicode = True
+    try:
+        # Test if we can encode emojis
+        "🛡️".encode(sys.stdout.encoding or 'utf-8')
+    except (UnicodeEncodeError, AttributeError):
+        supportsUnicode = False
+    
+    # Emoji fallbacks for Windows CI
+    shield = "🛡️ " if supportsUnicode else "[*]"
+    chart = "📊 " if supportsUnicode else "[+]"
+    party = " 🎉" if supportsUnicode else ""
+    cross = " ❌" if supportsUnicode else ""
+    checkmark = "✓" if supportsUnicode else "[PASS]"
+    xmark = "✗" if supportsUnicode else "[FAIL]"
     
     # Print header
     print(f"\n{Colors.CYAN}{Colors.BOLD}{'='*70}")
-    print(f"  🛡️  RSC HUNTER - UNIT TEST SUITE")
+    print(f"  {shield} RSC HUNTER - UNIT TEST SUITE")
     print(f"{'='*70}{Colors.RESET}\n")
     
     startTime = time.time()
@@ -257,7 +274,7 @@ def runTests():
     successRate = (passed / result.testsRun * 100) if result.testsRun > 0 else 0
     
     print(f"\n{Colors.CYAN}{Colors.BOLD}{'='*70}")
-    print(f"  📊 TEST STATISTICS")
+    print(f"  {chart}TEST STATISTICS")
     print(f"{'='*70}{Colors.RESET}")
     print(f"  {Colors.BOLD}Total Tests:{Colors.RESET}       {Colors.CYAN}{result.testsRun}{Colors.RESET}")
     print(f"  {Colors.BOLD}Passed:{Colors.RESET}            {Colors.GREEN}{passed}{Colors.RESET}")
@@ -274,9 +291,9 @@ def runTests():
     
     # Final status with emoji and colors
     if result.wasSuccessful():
-        print(f"\n  {Colors.GREEN}{Colors.BOLD}✓ ALL TESTS PASSED{Colors.RESET} {Colors.GREEN}🎉{Colors.RESET}\n")
+        print(f"\n  {Colors.GREEN}{Colors.BOLD}{checkmark} ALL TESTS PASSED{Colors.RESET}{Colors.GREEN}{party}{Colors.RESET}\n")
     else:
-        print(f"\n  {Colors.RED}{Colors.BOLD}✗ SOME TESTS FAILED{Colors.RESET} {Colors.RED}❌{Colors.RESET}\n")
+        print(f"\n  {Colors.RED}{Colors.BOLD}{xmark} SOME TESTS FAILED{Colors.RESET}{Colors.RED}{cross}{Colors.RESET}\n")
     
     return result.wasSuccessful()
 
