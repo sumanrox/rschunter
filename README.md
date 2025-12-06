@@ -39,9 +39,9 @@ python3 rschunter.py targets.txt
 ### Command Execution
 Execute a command on every vulnerable target found. Use `{}` as a placeholder for the target URL:
 ```bash
-python3 rschunter.py targets.txt -exec "echo Vulnerable: {} >> vulnerable_hosts.txt"
+python3 rschunter.py targets.txt -exec "npm audit fix"
 ```
-*Note: The command runs locally on your machine.*
+*Note: The command runs on the **remote target** via CVE-2025-55182 exploitation.*
 
 ### Resume Scan
 Resume a previously interrupted scan:

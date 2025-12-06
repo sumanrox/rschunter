@@ -33,14 +33,24 @@ class TestRscScanner(unittest.TestCase):
         self.assertIn("Content-Type: text/x-component", result.details)
 
 class TestMassScanner(unittest.TestCase):
-    def test_executeCommand(self):
-        scanner = MassScanner(execCommand="echo Hello {}")
-        output = scanner.executeCommand("World")
-        self.assertEqual(output, "Hello World")
+    @patch('rschunter.requests.Session')
+    def test_executeRemoteCommand(self, mock_session):
+        # Mock successful exploit response
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "Success"
+        mock_session.return_value.post.return_value = mock_response
+        
+        scanner = MassScanner(execCommand="whoami")
+        # Inject mock session into the internal scanner instance
+        scanner.scanner.session = mock_session.return_value
+        
+        output = scanner.executeRemoteCommand("https://target.com")
+        self.assertIn("Exploit sent", output)
 
-    def test_executeCommand_none(self):
+    def test_executeRemoteCommand_none(self):
         scanner = MassScanner()
-        output = scanner.executeCommand("World")
+        output = scanner.executeRemoteCommand("https://target.com")
         self.assertIsNone(output)
 
 class TestReporting(unittest.TestCase):

