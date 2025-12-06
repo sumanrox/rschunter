@@ -633,6 +633,7 @@ Examples:
         self.massMode = massMode
         self.targetIndex = 0
         self.lock = threading.Lock()
+        self.should_exit = threading.Event()  # Flag for clean exit
         
         # Update prompt with target info
         self._updatePrompt()
@@ -723,6 +724,7 @@ Examples:
     def do_exit(self, arg):
         """Exit the shell"""
         print(f"{Colors.YELLOW}Exiting shell...{Colors.RESET}")
+        self.should_exit.set()  # Signal exit
         return True
     
     def do_quit(self, arg):
@@ -1770,14 +1772,24 @@ def main():
                     try:
                         shell.cmdloop()
                     except KeyboardInterrupt:
-                        print(f"\n{Colors.YELLOW}Shell interrupted. Waiting for scan to complete...{Colors.RESET}")
+                        print(f"\n{Colors.YELLOW}Shell interrupted.{Colors.RESET}")
+                        shell.should_exit.set()
                     
-                    # Wait for scan to finish
-                    scanComplete.wait(timeout=30)
+                    # If user exited shell, don't wait for scan
+                    if not shell.should_exit.is_set():
+                        scanComplete.wait(timeout=30)
+                    else:
+                        print(f"{Colors.YELLOW}[*] Exiting (scan continues in background)...{Colors.RESET}")
                 else:
                     print(f"{Colors.YELLOW}[*] Waiting for vulnerable targets...{Colors.RESET}")
-                    scanComplete.wait()
-                    if shell.vulnerableTargets:
+                    
+                    # Wait for scan or exit signal
+                    while not scanComplete.is_set() and not shell.should_exit.is_set():
+                        scanComplete.wait(timeout=1)
+                    
+                    if shell.should_exit.is_set():
+                        print(f"{Colors.YELLOW}[*] Exiting...{Colors.RESET}")
+                    elif shell.vulnerableTargets:
                         shell.target = shell.vulnerableTargets[0]
                         shell.domain = UrlParser.extractDomain(shell.target)
                         shell._updatePrompt()
