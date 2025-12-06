@@ -1,5 +1,5 @@
 # RSC Hunter
-
+[![CI - Test & Lint](https://github.com/sumanrox/rschunter/actions/workflows/ci.yml/badge.svg)](https://github.com/sumanrox/rschunter/actions/workflows/ci.yml)
 A high-performance mass vulnerability scanner for CVE-2025-55182, targeting React Server Components (RSC) in Next.js applications. Features advanced detection methods, dual exploit techniques, and an interactive command shell for post-exploitation.
 
 ## Overview
