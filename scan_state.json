@@ -1,0 +1,29 @@
+{
+  "scanId": "20251206_231302",
+  "timestamp": "2025-12-06T23:13:06.373802",
+  "targets": [
+    "https://rajyasabha.nic.in"
+  ],
+  "completed": [
+    "https://rajyasabha.nic.in"
+  ],
+  "results": [
+    {
+      "url": "https://rajyasabha.nic.in",
+      "vulnerable": true,
+      "passiveDetected": false,
+      "activeDetected": true,
+      "endpointVulnerable": false,
+      "details": [
+        "Vary: RSC header",
+        "\u26a0\ufe0f WAF/Protection detected - exploitation blocked"
+      ],
+      "timestamp": "2025-12-06T23:13:05.011605",
+      "error": null,
+      "execOutput": null,
+      "wafProtected": true
+    }
+  ],
+  "total": 1,
+  "scanned": 1
+}

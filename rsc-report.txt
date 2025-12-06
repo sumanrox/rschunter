@@ -1,0 +1,12 @@
+======================================================================
+RSC VULNERABILITY SCAN REPORT
+Date: 2025-12-06 23:13:06
+======================================================================
+
+Total Scanned: 1
+Vulnerable:    1
+------------------------------
+
+1. https://rajyasabha.nic.in
+   Detections: Vary: RSC header, ⚠️ WAF/Protection detected - exploitation blocked
+
