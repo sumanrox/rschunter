@@ -13,6 +13,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Database backend for large-scale scanning
 - Automated Nuclei template updates
 
+## [2.4.0] - 2025-12-07
+
+### Changed - Major Refactoring & Reliability Improvements
+- **Modular Architecture**
+  - Split monolithic code into clean modules: `lib/exploits.py`, `lib/validators.py`, `lib/utils.py`
+  - Improved code maintainability and testability
+  - Easier to extend with new exploitation methods
+  
+- **Exploitation Method Reordering** (Critical Fix)
+  - Method 3 (msanft's PoC) now PRIMARY - most reliable method
+  - Method 2 (Assetnote format) as alternative fallback
+  - Method 1 (Function constructor) as last resort
+  - Based on real-world testing against vulnerable servers
+  
+- **Method 3 Optimization**
+  - Now sends directly to base URL only (no endpoint enumeration)
+  - Matches msanft's proven working exploit exactly
+  - Significantly improved success rate on actual vulnerable targets
+  - Reduced false negatives
+
+### Added
+- **Debug Flag** (`--debug`)
+  - Clean output by default (user-friendly)
+  - Verbose logging only when explicitly requested
+  - Shows RCE validation details, response previews, digest extraction
+  - Helpful for troubleshooting and understanding exploit flow
+  
+- **Enhanced Validation**
+  - RCE validation now non-blocking (advisory only)
+  - Scanner continues exploitation even if validation fails
+  - Prevents false negatives from strict validation
+  - Uses `echo $((41*271))` → 11111 marker in X-Action-Redirect header
+
+### Fixed
+- **URL Handling**
+  - Fixed URL corruption bugs ("scanning..." error)
+  - Proper urljoin usage throughout codebase
+  - Eliminated relative URL errors
+  
+- **Variable Name Typos**
+  - Fixed `Noneresult` → `None` causing NameError
+  - Code cleanup and consistency improvements
+  
+- **Debug Output Spam**
+  - Removed excessive debug prints cluttering output
+  - All debug messages now respect `--debug` flag
+  - Clean, professional output by default
+
+### Technical Details
+- Method 3 payload structure matches msanft's PoC exactly
+- Sends to base URL first (most reliable approach)
+- Only tries alternative endpoints if Method 3 fails
+- Improved digest extraction from NEXT_REDIRECT errors
+
 ## [2.3.0] - 2025-12-06
 
 ### Added - Advanced Detection & Evasion Capabilities

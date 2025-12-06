@@ -42,7 +42,7 @@ from rschunter import (
     MassScanner,
     InteractiveShell,
     Colors,
-    generateReport
+    generateCSV
 )
 
 

