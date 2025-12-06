@@ -143,7 +143,8 @@ def resolve_redirects(url: str, session: requests.Session, timeout: int = 10, ma
                     break
             else:
                 break
-        except Exception:
+        except Exception as e:
+            print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} resolve_redirects error: {e}")
             break
     
     return current_url
@@ -223,7 +224,8 @@ class UrlParser:
             
             return cleanUrl
             
-        except Exception:
+        except Exception as e:
+            print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} normalizeUrl error for {url}: {e}")
             return None
     
     @staticmethod
@@ -232,7 +234,8 @@ class UrlParser:
         try:
             parsed = urlparse(url)
             return parsed.netloc
-        except Exception:
+        except Exception as e:
+            print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} extractDomain error for {url}: {e}")
             return url
 
 
@@ -476,7 +479,8 @@ class RscScanner:
             
             return score >= 50, details
             
-        except Exception:
+        except Exception as e:
+            print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} _passiveScan error for {url}: {e}")
             return False, []
     
     def _activeFingerprint(self, url: str) -> Tuple[bool, List[str]]:
@@ -516,7 +520,8 @@ class RscScanner:
                 )
                 if dataResp.status_code != 404:
                     details.append("_next/data endpoint accessible")
-            except Exception:
+            except Exception as e:
+                print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} _activeFingerprint _next/data check failed: {e}")
                 pass
             
             # Check for Next.js build manifest
@@ -527,12 +532,14 @@ class RscScanner:
                 )
                 if manifestResp.status_code == 200:
                     details.append("Next.js webpack chunks present")
-            except Exception:
+            except Exception as e:
+                print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} _activeFingerprint webpack check failed: {e}")
                 pass
             
             return len(details) > 0, details
             
-        except Exception:
+        except Exception as e:
+            print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} _activeFingerprint error for {url}: {e}")
             return False, []
     
     def _checkEndpoints(self, url: str) -> Tuple[bool, List[str]]:
@@ -633,7 +640,8 @@ class RscScanner:
                     details.append(f"Error-based detection: {path}")
                     return True, details
                         
-            except Exception:
+            except Exception as e:
+                print(f"{Fore.YELLOW}[DEBUG]{Style.RESET_ALL} _checkEndpoints error for {path}: {e}")
                 continue
         
         return False, details
