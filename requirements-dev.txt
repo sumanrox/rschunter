@@ -1,0 +1,8 @@
+requests>=2.31.0
+urllib3>=2.0.0
+flake8>=7.0.0
+pylint>=3.0.0
+black>=23.0.0
+isort>=5.13.0
+bandit>=1.7.0
+safety>=3.0.0
