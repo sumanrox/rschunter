@@ -186,7 +186,7 @@ python3 rschunter.py targets.txt -o custom-report.txt
 
 ### Nuclei Template
 
-RSC Hunter includes a comprehensive Nuclei template (`nuclei-template.yaml`) for integration with ProjectDiscovery's vulnerability scanning workflows. The template implements all detection methods in Nuclei's YAML format.
+RSC Hunter includes a comprehensive Nuclei template (`nuclei-template.yaml`) for integration with your vulnerability scanning workflows. The template implements all detection methods in Nuclei's YAML format for use alongside the standalone scanner.
 
 **Features:**
 - 5 request layers (passive, active, error-based)
@@ -246,31 +246,15 @@ The Nuclei template includes:
 - Error digest extraction
 - Flight chunk pattern capture
 
-### Submitting to ProjectDiscovery
+### Template Validation
 
-The template is ready for submission to the official Nuclei templates repository:
-
+**Validate template syntax:**
 ```bash
-# Fork nuclei-templates repository
-git clone https://github.com/projectdiscovery/nuclei-templates.git
-cd nuclei-templates
-
-# Copy template to CVEs directory
-cp /path/to/nuclei-template.yaml cves/2025/CVE-2025-55182.yaml
-
-# Create pull request
-git checkout -b cve-2025-55182
-git add cves/2025/CVE-2025-55182.yaml
-git commit -m "Add CVE-2025-55182 Next.js RSC RCE detection template"
-git push origin cve-2025-55182
+nuclei -t nuclei-template.yaml -validate
 ```
 
-**Template Validation:**
+**Test against known vulnerable target:**
 ```bash
-# Validate template syntax
-nuclei -t nuclei-template.yaml -validate
-
-# Test against known vulnerable target
 nuclei -t nuclei-template.yaml -u http://vulnerable-target.local
 ```
 
