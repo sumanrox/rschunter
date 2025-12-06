@@ -37,7 +37,7 @@ python3 rschunter.py targets.txt
 ```
 
 ### Command Execution
-Execute a command on every vulnerable target found. Use `{}` as a placeholder for the target URL:
+Execute a command on every vulnerable target found:
 ```bash
 python3 rschunter.py targets.txt -exec "npm audit fix"
 ```
