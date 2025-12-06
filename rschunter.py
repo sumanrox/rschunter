@@ -48,6 +48,30 @@ except ImportError:
     print("Install it with: pip3 install requests")
     sys.exit(1)
 
+
+# Unicode fallback symbols for Windows compatibility
+def _get_unicode_char(char: str, fallback: str) -> str:
+    """Get Unicode character with fallback for Windows"""
+    try:
+        char.encode(sys.stdout.encoding or 'utf-8')
+        return char
+    except (UnicodeEncodeError, AttributeError):
+        return fallback
+
+# Define emoji/symbol constants with fallbacks
+EMOJI_SHIELD = _get_unicode_char("🔍", "[*]")
+EMOJI_CHART = _get_unicode_char("📊", "[STATS]")
+EMOJI_CHECK = _get_unicode_char("✅", "[OK]")
+EMOJI_PENDING = _get_unicode_char("⏳", "[...]")
+EMOJI_THREAD = _get_unicode_char("🧵", "[T]")
+EMOJI_LIGHTNING = _get_unicode_char("⚡", "[>>]")
+EMOJI_WARN = _get_unicode_char("⚠", "[!]")
+EMOJI_PAUSE = _get_unicode_char("⏸", "[||]")
+EMOJI_WARN_EMOJI = _get_unicode_char("⚠️", "[!]")
+EMOJI_FILE = _get_unicode_char("📄", "[FILE]")
+EMOJI_GREEN_CHECK = _get_unicode_char("✓", "[+]")
+
+
 # Color codes for terminal output
 class Colors:
     RED = '\033[91m'
@@ -685,7 +709,7 @@ class MassScanner:
     def _signalHandler(self, signum, frame):
         """Handle Ctrl+C gracefully"""
         if not self.paused:
-            print(f"\n\n{Colors.YELLOW}⏸  Pausing scan... Press Ctrl+C again to stop.{Colors.RESET}")
+            print(f"\n\n{Colors.YELLOW}{EMOJI_PAUSE}  Pausing scan... Press Ctrl+C again to stop.{Colors.RESET}")
             self.paused = True
         else:
             print(f"\n{Colors.RED}🛑 Stopping scan...{Colors.RESET}")
@@ -713,7 +737,7 @@ class MassScanner:
                             targets.append(normalized)
                             seen.add(normalized)
                     else:
-                        print(f"{Colors.YELLOW}⚠ Line {lineNum}: Invalid URL '{line}'{Colors.RESET}")
+                        print(f"{Colors.YELLOW}{EMOJI_WARN} Line {lineNum}: Invalid URL '{line}'{Colors.RESET}")
             
             return targets
             
@@ -878,18 +902,18 @@ class MassScanner:
         total = len(targets)
         
         print(f"\n{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.RESET}")
-        print(f"{Colors.BOLD}🔍 RSC Mass Vulnerability Scanner{Colors.RESET}")
+        print(f"{Colors.BOLD}{EMOJI_SHIELD} RSC Mass Vulnerability Scanner{Colors.RESET}")
         print(f"{Colors.CYAN}{'='*70}{Colors.RESET}")
-        print(f"📊 Total targets: {Colors.BOLD}{total}{Colors.RESET}")
-        print(f"✅ Already scanned: {Colors.GREEN}{len(completed)}{Colors.RESET}")
-        print(f"⏳ Pending: {Colors.YELLOW}{len(pending)}{Colors.RESET}")
-        print(f"🧵 Workers: {Colors.BOLD}{self.maxWorkers}{Colors.RESET}")
+        print(f"{EMOJI_CHART} Total targets: {Colors.BOLD}{total}{Colors.RESET}")
+        print(f"{EMOJI_CHECK} Already scanned: {Colors.GREEN}{len(completed)}{Colors.RESET}")
+        print(f"{EMOJI_PENDING} Pending: {Colors.YELLOW}{len(pending)}{Colors.RESET}")
+        print(f"{EMOJI_THREAD} Workers: {Colors.BOLD}{self.maxWorkers}{Colors.RESET}")
         if self.execCommand:
-            print(f"⚡ Exec: {Colors.MAGENTA}{self.execCommand}{Colors.RESET}")
+            print(f"{EMOJI_LIGHTNING} Exec: {Colors.MAGENTA}{self.execCommand}{Colors.RESET}")
         print(f"{Colors.CYAN}{'='*70}{Colors.RESET}\n")
         
         if not pending:
-            print(f"{Colors.GREEN}✓ All targets already scanned!{Colors.RESET}\n")
+            print(f"{Colors.GREEN}{EMOJI_GREEN_CHECK} All targets already scanned!{Colors.RESET}\n")
             return results
         
         # Scan with progress tracking
@@ -954,7 +978,7 @@ class MassScanner:
         progress = f"[{current}/{total}]"
         
         if result.error:
-            print(f"{Colors.YELLOW}{progress} ⚠ {domain}: {result.error}{Colors.RESET}")
+            print(f"{Colors.YELLOW}{progress} {EMOJI_WARN} {domain}: {result.error}{Colors.RESET}")
         elif result.vulnerable:
             print(f"{Colors.RED}{Colors.BOLD}{progress} [VULNERABLE] {domain}{Colors.RESET}")
             if result.execOutput:
@@ -969,7 +993,7 @@ class MassScanner:
         clean = [r for r in results if not r.vulnerable and not r.error]
         
         print(f"\n{Colors.BOLD}{Colors.CYAN}{'='*70}{Colors.RESET}")
-        print(f"{Colors.BOLD}📊 SCAN SUMMARY{Colors.RESET}")
+        print(f"{Colors.BOLD}{EMOJI_CHART} SCAN SUMMARY{Colors.RESET}")
         print(f"{Colors.CYAN}{'='*70}{Colors.RESET}\n")
         
         print(f"⏱  Scan time: {Colors.BOLD}{elapsed:.2f}s{Colors.RESET}")
@@ -983,7 +1007,7 @@ class MassScanner:
         
         if vulnerable:
             print(f"{Colors.RED}{Colors.BOLD}{'='*70}{Colors.RESET}")
-            print(f"{Colors.RED}{Colors.BOLD}⚠️  VULNERABLE TARGETS{Colors.RESET}")
+            print(f"{Colors.RED}{Colors.BOLD}{EMOJI_WARN_EMOJI}  VULNERABLE TARGETS{Colors.RESET}")
             print(f"{Colors.RED}{Colors.BOLD}{'='*70}{Colors.RESET}\n")
             
             # Create table
@@ -1011,7 +1035,7 @@ class MassScanner:
                 if result.execOutput:
                     print(f"     {Colors.MAGENTA}Exec: {result.execOutput.replace(chr(10), ' | ')}{Colors.RESET}")
             
-            print(f"\n{Colors.RED}⚠  These targets are potentially vulnerable to CVE-2025-55182{Colors.RESET}")
+            print(f"\n{Colors.RED}{EMOJI_WARN}  These targets are potentially vulnerable to CVE-2025-55182{Colors.RESET}")
             print(f"{Colors.YELLOW}📝 Full results saved to: scan_state.json{Colors.RESET}")
         
         print(f"\n{Colors.CYAN}{'='*70}{Colors.RESET}\n")
@@ -1048,7 +1072,7 @@ def generateReport(results: List[ScanResult], filename: str = "rsc-report.txt"):
                         f.write(f"     > {line}\n")
                 f.write("\n")
     
-    print(f"{Colors.GREEN}📄 Report saved to: {filename}{Colors.RESET}")
+    print(f"{Colors.GREEN}{EMOJI_FILE} Report saved to: {filename}{Colors.RESET}")
 
 
 def main():
@@ -1057,6 +1081,27 @@ def main():
     # Check if output is a TTY
     if not sys.stdout.isatty():
         Colors.disable()
+    
+    # Detect Unicode support for emojis
+    supportsUnicode = True
+    try:
+        "⚠".encode(sys.stdout.encoding or 'utf-8')
+    except (UnicodeEncodeError, AttributeError):
+        supportsUnicode = False
+    
+    # Emoji/symbol fallbacks for Windows CI
+    warn = "⚠" if supportsUnicode else "[!]"
+    check = "✓" if supportsUnicode else "[+]"
+    bullet = "•" if supportsUnicode else "*"
+    chart = "📊" if supportsUnicode else "[STATS]"
+    lightning = "⚡" if supportsUnicode else "[>>]"
+    file_emoji = "📄" if supportsUnicode else "[FILE]"
+    shield = "🛡" if supportsUnicode else "[*]"
+    pause = "⏸" if supportsUnicode else "[||]"
+    warn_emoji = "⚠️" if supportsUnicode else "[!]"
+    tree_branch = "├─" if supportsUnicode else "|-"
+    tree_end = "└─" if supportsUnicode else "+-"
+    arrow = "→" if supportsUnicode else "->"
     
     # Create comprehensive help with examples
     epilog = f"""
@@ -1095,34 +1140,34 @@ def main():
   {Colors.GREEN}exit, quit{Colors.RESET}          Exit the shell
 
 {Colors.CYAN}{Colors.BOLD}DETECTION METHODS:{Colors.RESET}
-  {Colors.MAGENTA}•{Colors.RESET} Passive: Content-Type, Flight Protocol, Shodan headers
-  {Colors.MAGENTA}•{Colors.RESET} Active: RSC headers, endpoint probing
-  {Colors.MAGENTA}•{Colors.RESET} Error-based: REACT2SHELL_PROBE marker detection
-  {Colors.MAGENTA}•{Colors.RESET} Fingerprint: __NEXT_DATA__, x-middleware-rewrite
+  {Colors.MAGENTA}{bullet}{Colors.RESET} Passive: Content-Type, Flight Protocol, Shodan headers
+  {Colors.MAGENTA}{bullet}{Colors.RESET} Active: RSC headers, endpoint probing
+  {Colors.MAGENTA}{bullet}{Colors.RESET} Error-based: REACT2SHELL_PROBE marker detection
+  {Colors.MAGENTA}{bullet}{Colors.RESET} Fingerprint: __NEXT_DATA__, x-middleware-rewrite
   
 {Colors.CYAN}{Colors.BOLD}OUTPUT FILES:{Colors.RESET}
   {Colors.YELLOW}scan_state.json{Colors.RESET}     Resume state & full results (JSON)
   {Colors.YELLOW}rsc-report.txt{Colors.RESET}      Human-readable vulnerability report
 
 {Colors.CYAN}{Colors.BOLD}NOTES:{Colors.RESET}
-  {Colors.YELLOW}⚠{Colors.RESET}  Scan state saved every 10 targets for resume
-  {Colors.YELLOW}⚠{Colors.RESET}  Use Ctrl+C once to pause, twice to stop
-  {Colors.YELLOW}⚠{Colors.RESET}  Shell mode filters out clean targets
-  {Colors.GREEN}✓{Colors.RESET}  Dual exploit methods with automatic fallback
+  {Colors.YELLOW}{warn}{Colors.RESET}  Scan state saved every 10 targets for resume
+  {Colors.YELLOW}{warn}{Colors.RESET}  Use Ctrl+C once to pause, twice to stop
+  {Colors.YELLOW}{warn}{Colors.RESET}  Shell mode filters out clean targets
+  {Colors.GREEN}{check}{Colors.RESET}  Dual exploit methods with automatic fallback
 
 {Colors.RED}{Colors.BOLD}CVE INFORMATION:{Colors.RESET}
   {Colors.RED}CVE-2025-55182:{Colors.RESET} React Server Components RCE
   {Colors.RED}Affected:{Colors.RESET} Next.js < 15.1.4, 14.2.24, 13.5.8
-  {Colors.RED}Severity:{Colors.RESET} {Colors.RED}{Colors.BOLD}Critical{Colors.RESET} (Prototype Pollution → RCE)
+  {Colors.RED}Severity:{Colors.RESET} {Colors.RED}{Colors.BOLD}Critical{Colors.RESET} (Prototype Pollution {arrow} RCE)
   {Colors.YELLOW}Shodan Query:{Colors.RESET} "X-Powered-By: Next.js" "x-middleware"
 
 {Colors.MAGENTA}{Colors.BOLD}AUTHOR & CREDITS:{Colors.RESET}
   {Colors.CYAN}{Colors.BOLD}Suman Roy{Colors.RESET} ({Colors.GREEN}@sumanrox{Colors.RESET})
-  {Colors.BLUE}├─ GitHub:{Colors.RESET}  https://github.com/sumanrox
-  {Colors.BLUE}└─ Website:{Colors.RESET} https://sumanroy.in
+  {Colors.BLUE}{tree_branch} GitHub:{Colors.RESET}  https://github.com/sumanrox
+  {Colors.BLUE}{tree_end} Website:{Colors.RESET} https://sumanroy.in
   
   {Colors.YELLOW}Research Credits:{Colors.RESET}
-  {Colors.GREEN}•{Colors.RESET} Security community - Real-world attack surface analysis
+  {Colors.GREEN}{bullet}{Colors.RESET} Security community - Real-world attack surface analysis
 
 {Colors.BLUE}Tool Repository: https://github.com/sumanrox/rschunter{Colors.RESET}
 """
