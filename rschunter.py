@@ -1323,7 +1323,7 @@ class MassScanner:
             if result.execOutput:
                 print(f"{Colors.MAGENTA}   ↳ Exec Output: {result.execOutput.splitlines()[0]}...{Colors.RESET}")
         else:
-            print(f"{Colors.GREEN}{progress} ✓ {domain}:{Colors.RESET}")
+            print(f"{Colors.GREEN}{progress} ✓ {domain}{Colors.RESET}")
     
     def _printSummary(self, results: List[ScanResult], elapsed: float, scanId: str):
         """Print scan summary with statistics"""
