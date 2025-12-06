@@ -1,7 +1,16 @@
 # RSC Hunter
-A high-performance mass vulnerability scanner for CVE-2025-55182, targeting React Server Components (RSC) in Next.js applications. Features advanced detection methods, dual exploit techniques, and an interactive command shell for post-exploitation.
+
+<div align="center">
+
+**A high-performance mass vulnerability scanner for CVE-2025-55182**
+
+Targeting React Server Components (RSC) in Next.js applications with advanced detection methods, dual exploit techniques, and an interactive command shell for post-exploitation.
 
 [![CI - Test & Lint](https://github.com/sumanrox/rschunter/actions/workflows/ci.yml/badge.svg)](https://github.com/sumanrox/rschunter/actions/workflows/ci.yml)
+
+**Created by [Suman Roy](https://github.com/sumanrox)** 🌐 [sumanroy.in](https://sumanroy.in)
+
+</div>
 ## Overview
 
 CVE-2025-55182 is a critical remote code execution vulnerability affecting Next.js applications using React Server Components. The vulnerability stems from unsafe prototype property access during deserialization of the React Flight Protocol, allowing attackers to achieve RCE through prototype pollution chains.
@@ -14,6 +23,18 @@ CVE-2025-55182 is a critical remote code execution vulnerability affecting Next.
 - Resume/pause capability with state persistence
 - Live vulnerability discovery in real-time
 - **Nuclei template** for ProjectDiscovery integration
+
+## 📸 Screenshot
+
+<div align="center">
+
+![RSC Hunter Mass Scan](./screenshot.png)
+
+*Mass scanning 2,264 targets with live vulnerability detection and beautiful terminal output*
+
+> **Note:** Domain names are blurred for privacy reasons
+
+</div>
 
 ## Features
 
