@@ -179,6 +179,50 @@ source venv/bin/activate
 pip install requests urllib3
 ```
 
+## Target File Format
+
+RSC Hunter features **smart URL normalization** - you can use any format:
+
+```text
+# Simple domains (auto-detects https://)
+example.com
+api.example.com
+sub.domain.co.uk
+
+# Domains with ports
+example.com:8080
+api.example.com:443
+
+# Domains with paths
+example.com/api/v1
+target.com/admin?key=value
+
+# Local/private IPs (auto-detects http://)
+192.168.0.58:3000
+10.0.0.1:8080
+127.0.0.1:3000
+localhost:3000
+
+# Full URLs (preserves your scheme)
+http://insecure-site.com
+https://secure-api.com:8443/v1
+
+# Mixed - all formats in one file
+192.168.1.100:3000
+example.com
+localhost:8080
+https://api.target.com/v2
+```
+
+**Smart Scheme Detection:**
+- **Private/Local IPs** → Automatically uses `http://`
+  - 192.168.x.x, 10.x.x.x, 127.x.x.x, 172.16-31.x.x
+  - localhost, 169.254.x.x (link-local)
+- **Public Domains** → Automatically uses `https://`
+- **Explicit URLs** → Preserves your specified scheme
+
+No need to manually add `http://` or `https://` - the scanner figures it out!
+
 ## Usage
 
 ### Basic Scanning

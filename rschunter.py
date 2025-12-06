@@ -230,50 +230,107 @@ class UrlParser:
     @staticmethod
     def normalizeUrl(rawInput: str) -> Optional[str]:
         """
-        Normalize and validate URL from various input formats.
+        Smart URL normalization - handles all common input formats:
+        - Full URLs: http://example.com, https://192.168.1.1:3000
+        - Domains: example.com, sub.domain.com
+        - IPs with ports: 192.168.1.1:3000, 10.0.0.1:8080
+        - Localhost variants: localhost:3000, 127.0.0.1
+        - With paths: example.com/api, 192.168.1.1:3000/admin
         """
         if not rawInput or not rawInput.strip():
             return None
         
         rawInput = rawInput.strip()
         
-        # Remove trailing slashes
-        rawInput = rawInput.rstrip('/')
+        # Handle scheme-relative URLs (//example.com)
+        if rawInput.startswith('//'):
+            rawInput = 'https:' + rawInput
         
-        # Check if it already has a scheme
-        if rawInput.startswith(('http://', 'https://')):
-            url = rawInput
+        # Check if it already has a valid scheme
+        has_scheme = rawInput.startswith(('http://', 'https://'))
+        
+        if not has_scheme:
+            # Extract hostname (before first / or :port)
+            # Handle cases like: domain.com:3000/path or 192.168.1.1/path
+            path_split = rawInput.split('/', 1)
+            host_part = path_split[0]
+            path_part = '/' + path_split[1] if len(path_split) > 1 else ''
+            
+            # Extract hostname without port
+            hostname = host_part.split(':')[0]
+            
+            # Smart scheme detection
+            is_local = (
+                # IPv4 private ranges
+                hostname.startswith(('127.', '10.', '192.168.')) or
+                # IPv4 private class B (172.16.0.0 - 172.31.255.255)
+                (hostname.startswith('172.') and 
+                 len(hostname.split('.')) >= 2 and
+                 hostname.split('.')[1].isdigit() and
+                 16 <= int(hostname.split('.')[1]) <= 31) or
+                # Link-local
+                hostname.startswith('169.254.') or
+                # Localhost variants
+                hostname in ('localhost', 'localhost.localdomain') or
+                # IPv6 localhost
+                hostname == '::1' or hostname == '[::1]'
+            )
+            
+            scheme = 'http' if is_local else 'https'
+            url = f'{scheme}://{rawInput}'
         else:
-            # Try with https first
-            url = f'https://{rawInput}'
+            url = rawInput
         
         try:
+            # Remove trailing slashes before parsing
+            url = url.rstrip('/')
             parsed = urlparse(url)
             
             # Validate scheme
             if parsed.scheme not in ('http', 'https'):
                 return None
             
-            # Validate hostname
+            # Validate netloc exists
             if not parsed.netloc:
                 return None
             
-            # Basic hostname validation (allow domains, IPs, localhost)
+            # Extract and validate hostname
             hostname = parsed.netloc.split(':')[0]
             if not hostname:
                 return None
             
+            # Basic hostname validation
+            # Allow: domains, IPv4, IPv6, localhost
+            if hostname.startswith('['):  # IPv6
+                if not hostname.endswith(']'):
+                    return None
+            elif hostname and hostname != 'localhost':
+                # Check if it's a valid IP or domain
+                parts = hostname.split('.')
+                # Must have some valid characters
+                if not any(c.isalnum() or c in '-_' for c in hostname):
+                    return None
+            
             # Reconstruct clean URL
             cleanUrl = f"{parsed.scheme}://{parsed.netloc}"
+            
+            # Preserve path (but remove trailing slash unless it's root)
             if parsed.path and parsed.path != '/':
-                cleanUrl += parsed.path
+                cleanUrl += parsed.path.rstrip('/')
+            
+            # Preserve query string
             if parsed.query:
                 cleanUrl += f'?{parsed.query}'
+            
+            # Preserve fragment if present
+            if parsed.fragment:
+                cleanUrl += f'#{parsed.fragment}'
             
             return cleanUrl
             
         except Exception as e:
-            print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} normalizeUrl error for {url}: {e}")
+            if self.debug:
+                print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} normalizeUrl error for {url}: {e}")
             return None
     
     @staticmethod
@@ -283,7 +340,8 @@ class UrlParser:
             parsed = urlparse(url)
             return parsed.netloc
         except Exception as e:
-            print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} extractDomain error for {url}: {e}")
+            if self.debug:
+                print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} extractDomain error for {url}: {e}")
             return url
 
 
@@ -469,7 +527,8 @@ class RscScanner:
             return score >= 50, details
             
         except Exception as e:
-            print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} _passiveScan error for {url}: {e}")
+            if self.debug:
+                print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} _passiveScan error for {url}: {e}")
             return False, []
     
     def _activeFingerprint(self, url: str) -> Tuple[bool, List[str]]:
@@ -501,7 +560,8 @@ class RscScanner:
             return len(details) > 0, details
             
         except Exception as e:
-            print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} _activeFingerprint error for {url}: {e}")
+            if self.debug:
+                print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} _activeFingerprint error for {url}: {e}")
             return False, []
     
     def _checkEndpoints(self, url: str) -> Tuple[bool, List[str]]:
@@ -527,7 +587,8 @@ class RscScanner:
                         return True, details
                         
             except Exception as e:
-                print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} _checkEndpoints error for {path}: {e}")
+                if self.debug:
+                    print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} _checkEndpoints error for {path}: {e}")
                 continue
         
         return False, details

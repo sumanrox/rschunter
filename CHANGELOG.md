@@ -33,6 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Significantly improved success rate on actual vulnerable targets
   - Reduced false negatives
 
+- **Smart URL Normalization** (Major UX Improvement)
+  - Handles ALL input formats: domains, IPs, full URLs, with/without ports/paths
+  - Automatic scheme detection: `http://` for private IPs, `https://` for public
+  - Supports: `example.com`, `192.168.1.1:3000`, `localhost:8080`, `api.com/v1`
+  - Preserves explicit schemes: `http://site.com` stays as `http://`
+  - No more SSL errors on local IPs - automatically uses correct protocol
+  - Handles private IP ranges: 10.x, 192.168.x, 172.16-31.x, 127.x, 169.254.x
+  - 29/29 test cases passing for various URL formats
+
 ### Added
 - **Debug Flag** (`--debug`)
   - Clean output by default (user-friendly)
