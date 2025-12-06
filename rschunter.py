@@ -289,8 +289,15 @@ class UrlParser:
 class ScanStateManager:
     """Manages scan state for resume/pause functionality"""
     
-    def __init__(self, stateFile: str = 'scan_state.json'):
-        self.stateFile = Path(stateFile)
+    def __init__(self, scanId: str = None, stateFile: str = None):
+        # Use explicit filename if provided (for testing), otherwise generate timestamp-based name
+        if stateFile:
+            filename = stateFile
+        elif scanId:
+            filename = f'scan_state_{scanId}.json'
+        else:
+            filename = f'scan_state_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+        self.stateFile = Path(filename)
         self.lock = threading.Lock()
     
     def saveState(self, targets: List[str], completed: Set[str], 
@@ -653,7 +660,7 @@ class MassScanner:
     
     def __init__(self, maxWorkers: int = 10, execCommand: str = None, wafBypass: bool = False,
                  wafBypassSize: int = 128, windowsMode: bool = False, vercelWafBypass: bool = False,
-                 followRedirects: bool = True):
+                 followRedirects: bool = True, noSave: bool = False):
         self.scanner = RscScanner(
             maxWorkers=maxWorkers,
             wafBypass=wafBypass,
@@ -662,7 +669,8 @@ class MassScanner:
             vercelWafBypass=vercelWafBypass,
             followRedirects=followRedirects
         )
-        self.stateManager = ScanStateManager()
+        self.noSave = noSave
+        self.stateManager = ScanStateManager() if not noSave else None
         self.maxWorkers = maxWorkers
         self.execCommand = execCommand
         self.wafBypass = wafBypass
@@ -670,6 +678,7 @@ class MassScanner:
         self.windowsMode = windowsMode
         self.vercelWafBypass = vercelWafBypass
         self.followRedirects = followRedirects
+        self.noSave = noSave
         self.paused = False
         self.stopScan = False
         
@@ -678,13 +687,11 @@ class MassScanner:
         signal.signal(signal.SIGTERM, self._signalHandler)
     
     def _signalHandler(self, signum, frame):
-        """Handle Ctrl+C gracefully"""
-        if not self.paused:
-            print(f"\n\n{Colors.YELLOW}{EMOJI_PAUSE}  Pausing scan... Press Ctrl+C again to stop.{Colors.RESET}")
-            self.paused = True
-        else:
-            print(f"\n{Colors.RED}🛑 Stopping scan...{Colors.RESET}")
-            self.stopScan = True
+        """Handle Ctrl+C - immediate exit since state is auto-saved"""
+        print(f"\n\n{Colors.RED}🛑 Scan interrupted by user. Exiting...{Colors.RESET}")
+        if not self.noSave and self.stateManager:
+            print(f"{Colors.YELLOW}💾 State saved. Use --resume to continue.{Colors.RESET}")
+        sys.exit(0)
     
     def loadTargets(self, inputFile: str) -> List[str]:
         """Load and parse targets from input file"""
@@ -1003,7 +1010,7 @@ class MassScanner:
                         self._printResult(result, len(completed), total)
                     
                     # Save state periodically (every 10 scans)
-                    if len(completed) % 10 == 0:
+                    if not self.noSave and self.stateManager and len(completed) % 10 == 0:
                         self.stateManager.saveState(targets, completed, results, scanId)
                     
                     # Handle pause
@@ -1014,7 +1021,8 @@ class MassScanner:
                     print(f"{Colors.RED}✗ {UrlParser.extractDomain(url)}: Error - {str(e)[:50]}{Colors.RESET}")
         
         # Final state save
-        self.stateManager.saveState(targets, completed, results, scanId)
+        if not self.noSave and self.stateManager:
+            self.stateManager.saveState(targets, completed, results, scanId)
         
         # Print summary
         elapsed = time.time() - startTime
@@ -1030,9 +1038,13 @@ class MassScanner:
         if result.error:
             print(f"{Colors.YELLOW}{progress} {EMOJI_WARN} {domain}: {result.error}{Colors.RESET}")
         elif result.vulnerable:
-            print(f"{Colors.RED}{Colors.BOLD}{progress} [VULNERABLE] {domain}{Colors.RESET}")
-            if result.execOutput:
-                print(f"{Colors.MAGENTA}   ↳ Exec Output: {result.execOutput.splitlines()[0]}...{Colors.RESET}")
+            if result.wafProtected:
+                print(f"{Colors.YELLOW}{Colors.BOLD}{progress} [VULNERABLE - WAF PROTECTED] {domain}{Colors.RESET}")
+                print(f"{Colors.YELLOW}   ↳ ⚠️  RSC detected but exploitation blocked by WAF/firewall{Colors.RESET}")
+            else:
+                print(f"{Colors.RED}{Colors.BOLD}{progress} [VULNERABLE] {domain}{Colors.RESET}")
+                if result.execOutput:
+                    print(f"{Colors.MAGENTA}   ↳ Exec Output: {result.execOutput.splitlines()[0]}...{Colors.RESET}")
         else:
             print(f"{Colors.GREEN}{progress} ✓ {domain}:{Colors.RESET}")
     
@@ -1099,8 +1111,12 @@ class MassScanner:
             pass
 
 
-def generateReport(results: List[ScanResult], filename: str = "rsc-report.txt"):
+def generateReport(results: List[ScanResult], filename: str = None):
     """Generate a human-readable report"""
+    # Use timestamp-based filename if not specified
+    if not filename:
+        filename = f"rsc-report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    
     vulnerable = [r for r in results if r.vulnerable]
     
     with open(filename, 'w') as f:
@@ -1335,9 +1351,14 @@ def main():
     output_group = parser.add_argument_group('Output Options')
     output_group.add_argument(
         "-o", "--output", 
-        default="rsc-report.txt",
+        default=None,
         metavar="FILE",
-        help="Output report filename (default: rsc-report.txt)"
+        help="Output report filename (default: rsc-report_<timestamp>.txt)"
+    )
+    output_group.add_argument(
+        "--save",
+        action="store_true",
+        help="Save state file and report (default: no saving unless --save specified)"
     )
     
     args = parser.parse_args()
@@ -1371,7 +1392,8 @@ def main():
             wafBypassSize=args.waf_bypass_size,
             windowsMode=args.windows,
             vercelWafBypass=args.vercel_waf_bypass,
-            followRedirects=args.follow_redirects
+            followRedirects=args.follow_redirects,
+            noSave=not args.save  # Invert: save only if --save flag is provided
         )
         
         if args.resume:
@@ -1475,8 +1497,9 @@ def main():
             else:
                 results = scanner.scanTargets(targets)
         
-        # Generate report
-        generateReport(results, args.output)
+        # Generate report only if --save is specified
+        if args.save:
+            generateReport(results, args.output)
         
         # Exit with code 1 if vulnerabilities found
         vulnerableCount = sum(1 for r in results if r.vulnerable)

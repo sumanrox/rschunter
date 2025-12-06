@@ -98,7 +98,7 @@ class TestScanStateManager(unittest.TestCase):
         """Create temporary state file for testing"""
         self.tempFile = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.json')
         self.tempFile.close()
-        self.stateManager = ScanStateManager(self.tempFile.name)
+        self.stateManager = ScanStateManager(stateFile=self.tempFile.name)
     
     def tearDown(self):
         """Clean up temporary files"""

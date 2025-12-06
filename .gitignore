@@ -154,3 +154,7 @@ cython_debug/
 # IDEs
 .vscode/
 .idea/
+
+# Scan output files (generated during scans)
+scan_state*.json
+rsc-report*.txt
