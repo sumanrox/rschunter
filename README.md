@@ -6,7 +6,7 @@
 
 Targeting React Server Components (RSC) in Next.js applications with advanced detection methods, dual exploit techniques, and an interactive command shell for post-exploitation.
 
-[![CI - Test & Lint](https://github.com/sumanrox/rschunter/actions/workflows/ci.yml/badge.svg)](https://github.com/sumanrox/rschunter/actions/workflows/ci.yml) | ![Hits](https://hits.sh/sumanrox/rschunter.svg)
+[![CI - Test & Lint](https://github.com/sumanrox/rschunter/actions/workflows/ci.yml/badge.svg)](https://github.com/sumanrox/rschunter/actions/workflows/ci.yml)
 
 **Created by [Suman Roy](https://github.com/sumanrox)** 🌐 [sumanroy.in](https://sumanroy.in)
 
