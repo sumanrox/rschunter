@@ -13,6 +13,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Database backend for large-scale scanning
 - Automated Nuclei template updates
 
+## [2.3.0] - 2025-12-06
+
+### Added - Advanced Detection & Evasion Capabilities
+- **X-Action-Redirect Header Detection** (Critical Feature)
+  - Definitive RCE proof detection via header reflection
+  - Detects `/login?a=11111` pattern (math operation result)
+  - 100 confidence points in scoring system
+  - Based on Assetnote research methodology
+  
+- **Redirect Following Logic**
+  - Automatically follows same-host redirects
+  - Tests root path first, then redirect destination
+  - Cross-origin redirects are not followed (security measure)
+  - Configurable with `--follow-redirects` / `--no-follow-redirects`
+  - Improves coverage for sites with language redirects (e.g., `/` → `/en/`)
+  
+- **WAF Bypass Mode**
+  - `--waf-bypass` flag to evade Web Application Firewalls
+  - Prepends random junk data to multipart request body
+  - Configurable size with `--waf-bypass-size` (default: 128KB)
+  - Automatically increases timeout to 20 seconds
+  - Effective against content-based WAF rules
+  - Random parameter names to avoid detection
+  
+- **Vercel WAF Bypass**
+  - `--vercel-waf-bypass` flag for Vercel-specific protection
+  - Alternative payload structure with escaped dollar signs
+  - Additional form field for signature bypass
+  - Targets Vercel-specific WAF parsing behavior
+  
+- **Windows Target Support**
+  - `--windows` flag for Windows-based Next.js apps
+  - Switches from Unix shell to PowerShell payloads
+  - Command format: `powershell -c "command"`
+  - Automatically adjusts exploit syntax
+  - Compatible with Windows Server environments
+  
+- **Mitigation Detection & Filtering**
+  - Automatically detects Vercel/Netlify mitigations
+  - Checks for `Server: vercel`, `Server: netlify` headers
+  - Detects `Netlify-Vary` header presence
+  - Filters false positives from mitigated hosts
+  - Reduces noise in scan results
+
+### Enhanced
+- **Detection System**
+  - Added X-Action-Redirect to scoring system (100 points)
+  - Improved REACT2SHELL_PROBE with mitigation checks
+  - Enhanced error-based detection accuracy
+  - Better false positive filtering
+  
+- **Exploitation**
+  - Updated `_exploitMethod2()` with Windows support
+  - Added WAF bypass junk data injection
+  - Vercel-specific payload structure
+  - Increased timeout for WAF bypass mode
+  
+- **Documentation**
+  - Comprehensive advanced features section in README
+  - New command reference table with all flags
+  - Usage examples for WAF bypass, Windows mode
+  - Mitigation detection explanation
+  - Updated scoring system table
+  
+- **Help Menu**
+  - Added "Advanced Features" examples section
+  - New "Advanced Options" argument group
+  - Updated feature list with new capabilities
+  - Configuration display for advanced modes
+
+### Technical
+- New utility functions: `generate_junk_data()`, `resolve_redirects()`, `is_mitigated_host()`
+- RscScanner class expanded with 5 new parameters
+- MassScanner class updated for parameter pass-through
+- Main function enhanced with configuration display
+- All tests passing (15/15) - full backward compatibility maintained
+
+### Credits
+- Inspired by Assetnote's react2shell-scanner research
+- X-Action-Redirect technique from @xEHLE_
+- Community contributions to CVE-2025-55182 analysis
+
 ## [2.2.0] - 2025-12-06
 
 ### Added

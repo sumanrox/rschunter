@@ -22,7 +22,12 @@ CVE-2025-55182 is a critical remote code execution vulnerability affecting Next.
 - Interactive shell for vulnerable targets
 - Resume/pause capability with state persistence
 - Live vulnerability discovery in real-time
-- **Nuclei template** for ProjectDiscovery integration
+- **Nuclei template** for vulnerability scanning
+- **NEW**: WAF bypass capabilities for evasion
+- **NEW**: Windows target support (PowerShell payloads)
+- **NEW**: Vercel/Netlify mitigation detection
+- **NEW**: X-Action-Redirect RCE proof detection
+- **NEW**: Automatic redirect following
 
 ## 📸 Screenshot
 
@@ -46,11 +51,13 @@ CVE-2025-55182 is a critical remote code execution vulnerability affecting Next.
 - Next.js build artifact identification
 - Server action header analysis
 - Version detection and extraction
-- **NEW**: `__NEXT_DATA__` runtime marker detection
-- **NEW**: Shodan-identified headers (x-nextjs-prerender, x-nextjs-stale-time)
-- **NEW**: x-middleware-rewrite detection (critical exploit condition)
-- **NEW**: x-middleware-subrequest header presence
-- **NEW**: Enhanced Vary header analysis (RSC, Next-Router-State-Tree)
+- **X-Action-Redirect header** RCE proof detection (definitive indicator)
+- `__NEXT_DATA__` runtime marker detection
+- Shodan-identified headers (x-nextjs-prerender, x-nextjs-stale-time)
+- x-middleware-rewrite detection (critical exploit condition)
+- x-middleware-subrequest header presence
+- Enhanced Vary header analysis (RSC, Next-Router-State-Tree)
+- **Mitigation filtering**: Vercel/Netlify protection detection
 
 **Active Fingerprinting**
 - RSC header probing (`RSC: 1`)
@@ -60,10 +67,11 @@ CVE-2025-55182 is a critical remote code execution vulnerability affecting Next.
 - React Flight Protocol format detection
 
 **Error-Based Detection**
-- **NEW**: REACT2SHELL_PROBE benign marker injection
+- REACT2SHELL_PROBE benign marker injection
 - Prototype pollution payload injection
 - React deserialization error analysis
 - Behavioral response fingerprinting
+- **Mitigation detection**: Filters false positives from protected hosts
 - Works even on hardened targets
 - No OS commands executed during detection
 
@@ -190,6 +198,93 @@ python3 rschunter.py --resume
 
 Scan state is automatically saved to `scan_state.json` every 10 targets.
 
+### Advanced Features
+
+#### WAF Bypass Mode
+
+Evade Web Application Firewalls that inspect request content:
+
+**Enable WAF bypass with default 128KB junk data:**
+```bash
+python3 rschunter.py targets.txt --waf-bypass
+```
+
+**Custom junk data size:**
+```bash
+python3 rschunter.py targets.txt --waf-bypass --waf-bypass-size 256
+```
+
+**How it works:**
+- Prepends random junk data to multipart request body
+- WAFs typically only inspect first portion of requests
+- Automatically increases timeout to 20s
+- Effective against content-based WAF rules
+
+#### Vercel WAF Bypass
+
+Specialized payload for Vercel WAF protection:
+
+```bash
+python3 rschunter.py --url https://example.vercel.app --vercel-waf-bypass
+```
+
+**Features:**
+- Alternative multipart structure
+- Escaped dollar signs for Vercel parsing
+- Additional form field to bypass signature checks
+
+#### Windows Target Support
+
+Scan Windows-based Next.js applications:
+
+```bash
+python3 rschunter.py --url https://windows-target.com --windows
+```
+
+**Behavior:**
+- Switches from Unix shell (`echo $((41*271))`) to PowerShell
+- Payload: `powershell -c "command"`
+- Automatically adjusts command execution syntax
+- Compatible with Windows Server environments
+
+#### Redirect Following
+
+Automatically follow same-host redirects (enabled by default):
+
+```bash
+# Follows redirects (default)
+python3 rschunter.py --url https://example.com
+
+# Disable redirect following
+python3 rschunter.py --url https://example.com --no-follow-redirects
+```
+
+**How it works:**
+- Tests root path first
+- Follows redirects to final destination (e.g., `/` → `/en/`)
+- Only follows same-host redirects (security measure)
+- Cross-origin redirects are not followed
+- Adds redirect information to scan results
+
+#### Combined Advanced Usage
+
+**Maximum evasion configuration:**
+```bash
+python3 rschunter.py targets.txt \\
+  --waf-bypass \\
+  --waf-bypass-size 256 \\
+  --threads 20 \\
+  --follow-redirects
+```
+
+**Windows targets with Vercel bypass:**
+```bash
+python3 rschunter.py windows-targets.txt \\
+  --windows \\
+  --vercel-waf-bypass \\
+  --threads 15
+```
+
 ### Output
 
 **Report generation**
@@ -292,6 +387,12 @@ nuclei -t nuclei-template.yaml -u http://vulnerable-target.local
 | `-sh, --shell` | Interactive shell mode | disabled |
 | `-exec` | Execute command on vulnerable targets | - |
 | `-o, --output` | Output report filename | rsc-report.txt |
+| `--waf-bypass` | Enable WAF bypass mode (junk data) | disabled |
+| `--waf-bypass-size` | WAF bypass junk data size (KB) | 128 |
+| `--windows` | Use PowerShell payloads for Windows | disabled |
+| `--vercel-waf-bypass` | Vercel-specific WAF bypass | disabled |
+| `--follow-redirects` | Follow same-host redirects | enabled |
+| `--no-follow-redirects` | Disable redirect following | - |
 
 ### Input File Format
 
@@ -320,22 +421,33 @@ The scanner uses weighted confidence scoring (threshold: 50 points):
 | Indicator | Points | Description |
 |-----------|--------|-------------|
 | `text/x-component` | 100 | Definitive RSC response |
+| **X-Action-Redirect** | 100 | **RCE proof** - Output reflection in header |
 | `window.__next_f` | 80 | Next.js flight data |
-| x-middleware-subrequest | 50 | **NEW**: Exploit condition header |
+| x-middleware-subrequest | 50 | Exploit condition header |
 | RSC payload structure | 50 | `{"then": "$..."}` format |
 | `$L/$@ patterns` | 45 | Flight protocol references |
 | React Flight Protocol | 45 | Chunk format match |
-| x-middleware-rewrite | 40 | **NEW**: Critical middleware indicator |
+| x-middleware-rewrite | 40 | Critical middleware indicator |
 | `react-server-dom-webpack` | 30 | RSC library presence |
-| x-nextjs-prerender | 30 | **NEW**: Shodan-identified header |
-| Vary: RSC | 35 | **NEW**: RSC content negotiation |
+| x-nextjs-prerender | 30 | Shodan-identified header |
+| Vary: RSC | 35 | RSC content negotiation |
 | Next-Action header | 35 | Server action support |
-| Vary: Next-Router-State-Tree | 30 | **NEW**: App Router presence |
-| __NEXT_DATA__ | 25 | **NEW**: Runtime marker |
-| x-nextjs-stale-time | 25 | **NEW**: ISR indicator |
+| Vary: Next-Router-State-Tree | 30 | App Router presence |
+| __NEXT_DATA__ | 25 | Runtime marker |
+| x-nextjs-stale-time | 25 | ISR indicator |
 | Build artifacts | 25 | `/_next/static/` present |
-| Vary: Next-Router-Prefetch | 20 | **NEW**: Prefetch capability |
+| Vary: Next-Router-Prefetch | 20 | Prefetch capability |
 | Next.js version | 20 | Informational |
+
+### Mitigation Detection
+
+RSC Hunter automatically detects and filters false positives from hosts with mitigations:
+
+**Detected Mitigations:**
+- **Vercel Protection**: `Server: vercel` header
+- **Netlify Protection**: `Server: netlify` or `Netlify-Vary` header
+
+Hosts with these protections are marked as mitigated and not reported as vulnerable, reducing false positive rates.
 
 ### Real-World Attack Surface Analysis
 
