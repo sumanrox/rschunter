@@ -13,6 +13,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Database backend for large-scale scanning
 - Automated Nuclei template updates
 
+## [2.5.0] - 2025-12-07
+
+### Added
+- **Proxy Support** (`--proxy`)
+  - Route all traffic through proxy for inspection (Burp Suite, mitmproxy, ZAP)
+  - Command-line flag: `--proxy http://127.0.0.1:8080`
+  - Environment variable support: `HTTP_PROXY`, `HTTPS_PROXY`
+  - Automatic SSL verification disable for MITM proxies
+  - Clean output with suppressed SSL warnings
+  - Perfect for debugging and analyzing exploit traffic
+
+### Fixed
+- **Interactive Shell Exit** (`-sh` flag)
+  - Shell now exits immediately when typing `exit` during large scans
+  - Background scan continues as daemon thread (doesn't block exit)
+  - Added `should_exit` Event flag for clean shutdown
+  - Fixed blocking `scanComplete.wait()` calls after shell exit
+  - Improved user experience for long-running scans
+
 ## [2.4.0] - 2025-12-07
 
 ### Changed - Major Refactoring & Reliability Improvements

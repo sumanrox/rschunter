@@ -20,6 +20,7 @@ Usage:
     python3 rschunter.py targets.txt -sh --threads 20
     python3 rschunter.py targets.txt -exec "echo Vulnerable: {}" --threads 20
     python3 rschunter.py targets.txt --save -o vulnerables.csv
+    python3 rschunter.py --url https://example.com --proxy http://127.0.0.1:8080
     python3 rschunter.py --resume
 """
 
@@ -32,6 +33,7 @@ import argparse
 import subprocess
 import shlex
 import cmd
+import os
 from pathlib import Path
 from urllib.parse import urlparse, urljoin
 from typing import Dict, List, Tuple, Optional, Set
@@ -400,7 +402,7 @@ class RscScanner:
     
     def __init__(self, timeout: int = 10, maxWorkers: int = 10, wafBypass: bool = False, 
                  wafBypassSize: int = 128, windowsMode: bool = False, vercelWafBypass: bool = False,
-                 followRedirects: bool = True, debug: bool = False):
+                 followRedirects: bool = True, debug: bool = False, proxy: str = None):
         self.timeout = timeout
         self.maxWorkers = maxWorkers
         self.wafBypass = wafBypass
@@ -409,6 +411,7 @@ class RscScanner:
         self.vercelWafBypass = vercelWafBypass
         self.followRedirects = followRedirects
         self.debug = debug
+        self.proxy = proxy
         self.session = self._createSession()
         
     def _createSession(self) -> requests.Session:
@@ -434,6 +437,18 @@ class RscScanner:
         session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
         })
+        
+        # Configure proxy if specified
+        if self.proxy:
+            session.proxies = {
+                'http': self.proxy,
+                'https': self.proxy
+            }
+            # Disable SSL verification when using proxy (for Burp/mitmproxy)
+            session.verify = False
+            # Suppress SSL warnings
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         
         return session
     
@@ -742,7 +757,7 @@ class MassScanner:
     
     def __init__(self, maxWorkers: int = 10, execCommand: str = None, wafBypass: bool = False,
                  wafBypassSize: int = 128, windowsMode: bool = False, vercelWafBypass: bool = False,
-                 followRedirects: bool = True, noSave: bool = False, debug: bool = False):
+                 followRedirects: bool = True, noSave: bool = False, debug: bool = False, proxy: str = None):
         self.scanner = RscScanner(
             maxWorkers=maxWorkers,
             wafBypass=wafBypass,
@@ -750,7 +765,8 @@ class MassScanner:
             windowsMode=windowsMode,
             vercelWafBypass=vercelWafBypass,
             followRedirects=followRedirects,
-            debug=debug
+            debug=debug,
+            proxy=proxy
         )
         self.noSave = noSave
         self.stateManager = ScanStateManager() if not noSave else None
@@ -1623,6 +1639,11 @@ def main():
         action="store_true",
         help="Use Vercel-specific WAF bypass payload variant"
     )
+    advanced_group.add_argument(
+        "--proxy",
+        metavar="URL",
+        help="Proxy URL for traffic inspection (e.g., http://127.0.0.1:8080 for Burp Suite)"
+    )
     
     # Exploitation options
     exploit_group = parser.add_argument_group('Exploitation Options')
@@ -1659,6 +1680,10 @@ def main():
     
     args = parser.parse_args()
     
+    # Support HTTP_PROXY/HTTPS_PROXY environment variables if --proxy not specified
+    if not args.proxy:
+        args.proxy = os.environ.get('HTTP_PROXY') or os.environ.get('HTTPS_PROXY')
+    
     if not args.input and not args.url and not args.resume:
         parser.print_help()
         sys.exit(1)
@@ -1667,7 +1692,7 @@ def main():
     timeout = 20 if args.waf_bypass else 10
     
     # Print configuration if advanced features are used
-    if args.waf_bypass or args.windows or args.vercel_waf_bypass or not args.follow_redirects:
+    if args.waf_bypass or args.windows or args.vercel_waf_bypass or not args.follow_redirects or args.proxy:
         print(f"\n{Colors.CYAN}{Colors.BOLD}Advanced Configuration:{Colors.RESET}")
         if args.waf_bypass:
             print(f"  {Colors.GREEN}{check}{Colors.RESET} WAF Bypass: Enabled ({args.waf_bypass_size}KB junk data)")
@@ -1678,6 +1703,8 @@ def main():
             print(f"  {Colors.GREEN}{check}{Colors.RESET} Windows Mode: PowerShell payloads")
         if not args.follow_redirects:
             print(f"  {Colors.YELLOW}{warn}{Colors.RESET} Redirect Following: Disabled")
+        if args.proxy:
+            print(f"  {Colors.GREEN}{check}{Colors.RESET} Proxy: {args.proxy} (SSL verification disabled)")
         print()
     
     try:
@@ -1690,7 +1717,8 @@ def main():
             vercelWafBypass=args.vercel_waf_bypass,
             followRedirects=args.follow_redirects,
             noSave=not args.save,  # Invert: save only if --save flag is provided
-            debug=args.debug
+            debug=args.debug,
+            proxy=args.proxy
         )
         
         if args.resume:

@@ -331,6 +331,31 @@ python3 rschunter.py --url https://example.vercel.app --vercel-waf-bypass
 - Escaped dollar signs for Vercel parsing
 - Additional form field to bypass signature checks
 
+#### Proxy Support (Burp Suite)
+
+Route all traffic through a proxy for inspection and debugging:
+
+```bash
+# Using command-line argument
+python3 rschunter.py --url https://example.com --proxy http://127.0.0.1:8080
+
+# Using environment variable
+export HTTP_PROXY=http://127.0.0.1:8080
+python3 rschunter.py --url https://example.com
+```
+
+**Features:**
+- Routes all HTTP/HTTPS traffic through specified proxy
+- Automatically disables SSL verification for MITM proxies
+- Suppresses SSL warnings for clean output
+- Perfect for Burp Suite, mitmproxy, or other inspection tools
+- Supports both `--proxy` flag and `HTTP_PROXY`/`HTTPS_PROXY` env vars
+
+**Common Proxy URLs:**
+- Burp Suite: `http://127.0.0.1:8080`
+- mitmproxy: `http://127.0.0.1:8080`
+- ZAP: `http://127.0.0.1:8090`
+
 #### Windows Target Support
 
 Scan Windows-based Next.js applications:
@@ -521,6 +546,7 @@ nuclei -t nuclei-template.yaml -u http://vulnerable-target.local
 | `--waf-bypass-size` | WAF bypass junk data size (KB) | 128 |
 | `--windows` | Use PowerShell payloads for Windows | disabled |
 | `--vercel-waf-bypass` | Vercel-specific WAF bypass | disabled |
+| `--proxy` | Proxy URL for traffic inspection | - |
 | `--follow-redirects` | Follow same-host redirects | enabled |
 | `--no-follow-redirects` | Disable redirect following | - |
 
