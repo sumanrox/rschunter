@@ -112,7 +112,7 @@ def generate_junk_data(size_kb: int = 128) -> Tuple[str, str]:
     return param_name, junk
 
 
-def resolve_redirects(url: str, session: requests.Session, timeout: int = 10, max_redirects: int = 10) -> str:
+def resolve_redirects(url: str, session: requests.Session, timeout: int = 10, max_redirects: int = 10, debug: bool = False) -> str:
     """Follow same-host redirects only, return final URL"""
     current_url = url
     original_host = urlparse(url).netloc
@@ -145,7 +145,8 @@ def resolve_redirects(url: str, session: requests.Session, timeout: int = 10, ma
             else:
                 break
         except Exception as e:
-            print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} resolve_redirects error: {e}")
+            if debug:
+                print(f"{Colors.YELLOW}[DEBUG]{Colors.RESET} resolve_redirects error: {e}")
             break
     
     return current_url
@@ -454,7 +455,7 @@ class RscScanner:
         try:
             # Follow redirects if enabled
             if self.followRedirects:
-                finalUrl = resolve_redirects(url, self.session, self.timeout)
+                finalUrl = resolve_redirects(url, self.session, self.timeout, debug=self.debug)
                 if finalUrl != url:
                     details.append(f"Followed redirect: {url} -> {finalUrl}")
                     url = finalUrl
@@ -1812,4 +1813,11 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"{Colors.RED}Unexpected error: {e}{Colors.RESET}")
+        sys.exit(1)
+    except KeyboardInterrupt:
+        print(f"\n{Colors.YELLOW}Interrupted by user.{Colors.RESET}")
+        sys.exit(0)
